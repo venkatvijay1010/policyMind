@@ -54,6 +54,8 @@ class PolicyChunk(Base):
     section_name: Mapped[Optional[str]] = mapped_column(String(255))
     page_number: Mapped[Optional[int]] = mapped_column(Integer)
     chunk_index: Mapped[Optional[int]] = mapped_column(Integer)
+    char_start: Mapped[Optional[int]] = mapped_column(Integer)
+    char_end: Mapped[Optional[int]] = mapped_column(Integer)
     token_count: Mapped[Optional[int]] = mapped_column(Integer)
     embedding: Mapped[Optional[List[float]]] = mapped_column(Vector(settings.embedding_dimension))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -181,6 +183,7 @@ class Hospital(Base):
     pincode: Mapped[Optional[str]] = mapped_column(String(10))
     tier: Mapped[Optional[str]] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_network_hospital: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

@@ -50,6 +50,16 @@ class Settings(BaseSettings):
     # Rate limiting
     max_tokens_per_request: int = 4000
     
+    # CORS
+    cors_origins: str = "*"  # Comma-separated list of origins, or * for all
+    
+    @property
+    def cors_origins_list(self) -> list:
+        """Parse CORS origins from comma-separated string."""
+        if self.cors_origins == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+    
     @property
     def is_production(self) -> bool:
         return self.app_env == "production"

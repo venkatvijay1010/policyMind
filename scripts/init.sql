@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS policy_chunks (
     section_name VARCHAR(255),
     page_number INTEGER,
     chunk_index INTEGER,
+    char_start INTEGER,
+    char_end INTEGER,
     token_count INTEGER,
     embedding VECTOR(1536),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -137,6 +139,7 @@ CREATE TABLE IF NOT EXISTS hospitals (
     pincode VARCHAR(10),
     tier VARCHAR(20),
     is_active BOOLEAN DEFAULT true,
+    is_network_hospital BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -160,9 +163,11 @@ CREATE TABLE IF NOT EXISTS eval_results (
     run_id VARCHAR(100) NOT NULL,
     question_id INTEGER REFERENCES eval_questions(id),
     generated_answer TEXT,
+    actual_answer TEXT,
     retrieved_chunk_ids INTEGER[],
     faithfulness_score DECIMAL(5,4),
     relevance_score DECIMAL(5,4),
+    similarity_score DECIMAL(5,4),
     context_precision DECIMAL(5,4),
     is_correct BOOLEAN,
     latency_ms INTEGER,

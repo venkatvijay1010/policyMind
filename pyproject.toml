@@ -49,6 +49,8 @@ dependencies = [
     "httpx>=0.26.0",
     "tenacity>=8.2.3",
     "structlog>=24.1.0",
+    "slowapi>=0.1.9",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]
@@ -59,6 +61,7 @@ dev = [
     "black>=24.1.0",
     "ruff>=0.1.14",
     "mypy>=1.8.0",
+    "httpx>=0.26.0",
 ]
 
 eval = [

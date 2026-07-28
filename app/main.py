@@ -55,10 +55,20 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# Add CORS middleware
+# Add rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Add CORS middleware with environment-based configuration
+allowed_origins = settings.cors_origins_list
+if settings.is_production and "*" in allowed_origins:
+    # In production, don't allow all origins - default to same-origin
+    logger.warning("CORS_ORIGINS is set to '*' in production. Restricting to localhost.")
+    allowed_origins = ["http://localhost:3000", "http://localhost:8000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

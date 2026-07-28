@@ -16,22 +16,24 @@ router = APIRouter(prefix="/ask", tags=["Query"])
 
 
 async def log_query_background(
-    db: AsyncSession,
     query: str,
     query_type: str,
     latency_ms: int
 ):
     """Background task to log query for analytics."""
     from sqlalchemy import text
+    from app.infrastructure.database.postgres import async_session_factory
+    
     try:
-        await db.execute(
-            text("""
-                INSERT INTO query_logs (query, query_type, latency_ms)
-                VALUES (:query, :query_type, :latency_ms)
-            """),
-            {"query": query, "query_type": query_type, "latency_ms": latency_ms}
-        )
-        await db.commit()
+        async with async_session_factory() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO query_logs (query, query_type, latency_ms)
+                    VALUES (:query, :query_type, :latency_ms)
+                """),
+                {"query": query, "query_type": query_type, "latency_ms": latency_ms}
+            )
+            await db.commit()
     except Exception as e:
         logger.error("Failed to log query", error=str(e))
 
@@ -97,7 +99,6 @@ async def ask_question(
         # Log query in background
         background_tasks.add_task(
             log_query_background,
-            db,
             request.query,
             result.query_type.value,
             result.latency_ms

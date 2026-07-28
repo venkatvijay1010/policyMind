@@ -79,7 +79,7 @@ async def list_questions(
         EvalQuestion(
             question_id=q.id,
             question=q.question,
-            expected_answer=q.expected_answer,
+            expected_answer=q.ground_truth_answer,
             query_type=QueryTypeEnum(q.query_type),
             difficulty=q.difficulty
         )
@@ -190,12 +190,13 @@ async def run_evaluation(
             await db.execute(
                 text("""
                     INSERT INTO eval_results 
-                    (run_id, question_id, actual_answer, is_correct, similarity_score, latency_ms)
-                    VALUES (:run_id, :question_id, :actual_answer, :is_correct, :similarity, :latency)
+                    (run_id, question_id, generated_answer, actual_answer, is_correct, similarity_score, latency_ms)
+                    VALUES (:run_id, :question_id, :generated_answer, :actual_answer, :is_correct, :similarity, :latency)
                 """),
                 {
                     "run_id": run_id,
                     "question_id": q.id,
+                    "generated_answer": query_result.answer,
                     "actual_answer": query_result.answer,
                     "is_correct": is_correct,
                     "similarity": similarity,
@@ -273,11 +274,11 @@ async def evaluation_history(
                 SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) as correct_answers,
                 AVG(similarity_score) as avg_similarity,
                 AVG(latency_ms) as avg_latency,
-                MIN(evaluated_at) as started_at,
-                MAX(evaluated_at) as completed_at
+                MIN(created_at) as started_at,
+                MAX(created_at) as completed_at
             FROM eval_results
             GROUP BY run_id
-            ORDER BY MIN(evaluated_at) DESC
+            ORDER BY MIN(created_at) DESC
             LIMIT :limit
         """),
         {"limit": limit}
@@ -311,7 +312,7 @@ async def get_run_details(
     result = await db.execute(
         text("""
             SELECT 
-                er.*, eq.question, eq.expected_answer, eq.query_type, eq.difficulty
+                er.*, eq.question, eq.ground_truth_answer, eq.query_type, eq.difficulty
             FROM eval_results er
             JOIN eval_questions eq ON er.question_id = eq.id
             WHERE er.run_id = :run_id
@@ -331,14 +332,14 @@ async def get_run_details(
             {
                 "question_id": r.question_id,
                 "question": r.question,
-                "expected_answer": r.expected_answer,
+                "expected_answer": r.ground_truth_answer,
                 "actual_answer": r.actual_answer,
                 "query_type": r.query_type,
                 "difficulty": r.difficulty,
                 "is_correct": r.is_correct,
                 "similarity_score": round(float(r.similarity_score or 0), 4),
                 "latency_ms": r.latency_ms,
-                "evaluated_at": r.evaluated_at
+                "created_at": r.created_at
             }
             for r in results
         ]
