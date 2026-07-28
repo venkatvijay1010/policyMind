@@ -83,6 +83,12 @@ class EmbeddingService:
         Same as embed_text but named for clarity.
         """
         return await self.embed_text(query)
+    
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """
+        Alias for embed_texts for backward compatibility.
+        """
+        return await self.embed_texts(texts)
 
 
 # Singleton instance

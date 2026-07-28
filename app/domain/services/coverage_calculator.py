@@ -17,6 +17,48 @@ class CoverageCalculation:
     calculation_breakdown: str
 
 
+@dataclass
+class RoomRentResult:
+    """Result of room rent calculation."""
+    allowed_amount: float
+    excess: float
+    proportional_deduction: float
+
+
+@dataclass
+class ClaimCalculationResult:
+    """Result of full claim calculation."""
+    claim_amount: float
+    allowed_claim: float
+    deductible: float
+    copay: float
+    room_rent_deduction: float
+    net_payable: float
+
+
+# Plan-specific configurations
+PLAN_CONFIGS = {
+    "standard": {
+        "room_rent_percent": 0.01,  # 1% of SI
+        "room_rent_daily_limit": 5000,
+        "copay_percent": 0.20,  # 20%
+        "deductible": 5000,
+    },
+    "enhanced": {
+        "room_rent_percent": 0.02,  # 2% of SI
+        "room_rent_daily_limit": 10000,
+        "copay_percent": 0.10,  # 10%
+        "deductible": 2500,
+    },
+    "premium": {
+        "room_rent_percent": None,  # No limit
+        "room_rent_daily_limit": None,
+        "copay_percent": 0.0,  # No copay
+        "deductible": 0,
+    },
+}
+
+
 class CoverageCalculator:
     """
     Deterministic calculator for coverage-related math.
@@ -167,3 +209,137 @@ Claim Amount: ₹{claim_amount:,.2f}
             "waiting_period_end_date": waiting_period_end.isoformat(),
             "days_remaining": max(waiting_period_days - days_since_inception, 0) if is_within else 0
         }
+    
+    def calculate_room_rent(
+        self,
+        actual_room_rent: float,
+        sum_insured: float,
+        plan_type: str = "standard",
+        daily_limit: Optional[float] = None
+    ) -> RoomRentResult:
+        """
+        Calculate room rent allowed based on plan type.
+        """
+        plan = PLAN_CONFIGS.get(plan_type.lower(), PLAN_CONFIGS["standard"])
+        
+        # Premium plan has no limit
+        if plan["room_rent_percent"] is None:
+            return RoomRentResult(
+                allowed_amount=actual_room_rent,
+                excess=0,
+                proportional_deduction=1.0
+            )
+        
+        # Calculate limit based on percentage of SI
+        percent_limit = sum_insured * plan["room_rent_percent"]
+        
+        # Use provided daily limit or plan default
+        fixed_limit = daily_limit or plan["room_rent_daily_limit"]
+        
+        # Final limit is lower of percentage and fixed limit
+        if fixed_limit:
+            room_rent_limit = min(percent_limit, fixed_limit)
+        else:
+            room_rent_limit = percent_limit
+        
+        # Calculate allowed amount and excess
+        allowed = min(actual_room_rent, room_rent_limit)
+        excess = max(0, actual_room_rent - room_rent_limit)
+        
+        # Proportional deduction factor
+        proportional = allowed / actual_room_rent if actual_room_rent > 0 else 1.0
+        
+        return RoomRentResult(
+            allowed_amount=allowed,
+            excess=excess,
+            proportional_deduction=proportional
+        )
+    
+    def calculate_icu_charges(
+        self,
+        actual_icu_rate: float,
+        room_rent_limit: float
+    ) -> dict:
+        """
+        Calculate ICU charges (typically 2x room rent limit).
+        """
+        icu_limit = room_rent_limit * 2
+        allowed = min(actual_icu_rate, icu_limit)
+        excess = max(0, actual_icu_rate - icu_limit)
+        
+        return {
+            "allowed_amount": allowed,
+            "excess": excess,
+            "icu_limit": icu_limit
+        }
+    
+    def calculate_copay(
+        self,
+        claim_amount: float,
+        plan_type: str = "standard",
+        is_network_hospital: bool = True
+    ) -> float:
+        """
+        Calculate copay based on plan type and hospital network.
+        """
+        plan = PLAN_CONFIGS.get(plan_type.lower(), PLAN_CONFIGS["standard"])
+        
+        copay = claim_amount * plan["copay_percent"]
+        
+        # Non-network hospital: additional 20% copay
+        if not is_network_hospital:
+            copay += claim_amount * 0.20
+        
+        # High-value claim (> 10 lakhs): additional 10% copay
+        if claim_amount > 1000000:
+            copay += claim_amount * 0.10
+        
+        return copay
+    
+    def calculate_deductible(self, plan_type: str = "standard") -> float:
+        """
+        Get deductible amount for plan type.
+        """
+        plan = PLAN_CONFIGS.get(plan_type.lower(), PLAN_CONFIGS["standard"])
+        return float(plan["deductible"])
+    
+    def calculate_net_payable(
+        self,
+        claim_amount: float,
+        plan_type: str = "standard",
+        sum_insured: float = 500000,
+        actual_room_rent: Optional[float] = None,
+        room_rent_limit: Optional[float] = None
+    ) -> ClaimCalculationResult:
+        """
+        Calculate net payable after all deductions.
+        """
+        plan = PLAN_CONFIGS.get(plan_type.lower(), PLAN_CONFIGS["standard"])
+        
+        # Cap at sum insured
+        allowed_claim = min(claim_amount, sum_insured)
+        
+        # Calculate deductible
+        deductible = float(plan["deductible"])
+        after_deductible = max(0, allowed_claim - deductible)
+        
+        # Calculate copay
+        copay = after_deductible * plan["copay_percent"]
+        
+        # Room rent proportional deduction
+        room_rent_deduction = 0.0
+        if actual_room_rent and room_rent_limit and actual_room_rent > room_rent_limit:
+            proportion = room_rent_limit / actual_room_rent
+            room_rent_deduction = after_deductible * (1 - proportion)
+        
+        # Final net payable
+        net_payable = max(0, after_deductible - copay - room_rent_deduction)
+        
+        return ClaimCalculationResult(
+            claim_amount=claim_amount,
+            allowed_claim=allowed_claim,
+            deductible=deductible,
+            copay=copay,
+            room_rent_deduction=room_rent_deduction,
+            net_payable=net_payable
+        )

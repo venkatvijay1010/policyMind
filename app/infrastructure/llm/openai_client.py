@@ -195,6 +195,21 @@ Answer:"""
             temperature=0.2,
             max_tokens=1500
         )
+    
+    async def generate_json(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.1
+    ) -> dict:
+        """
+        Alias for generate_structured for JSON output.
+        """
+        return await self.generate_structured(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=temperature
+        )
 
 
 # Singleton instance

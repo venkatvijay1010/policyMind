@@ -23,19 +23,19 @@ class CitationBuilder:
         """
         citations = []
         
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks, 1):
             # Truncate snippet
             snippet = chunk.content[:max_snippet_length]
             if len(chunk.content) > max_snippet_length:
                 snippet += "..."
             
             citation = Citation(
-                policy_number=f"Policy-{chunk.policy_id}",  # Will be replaced with actual policy number
-                section_type=chunk.section_type.value if chunk.section_type else None,
-                section_name=chunk.section_name,
-                page_number=chunk.page_number,
-                snippet=snippet,
-                relevance_score=chunk.score
+                source_id=i,
+                policy_name=f"Policy-{chunk.policy_id}",
+                section=chunk.section_name,
+                page=chunk.page_number,
+                chunk_text=snippet,
+                relevance_score=chunk.score or 0.0
             )
             citations.append(citation)
         
@@ -52,12 +52,12 @@ class CitationBuilder:
         formatted = []
         for i, citation in enumerate(citations, 1):
             source_info = f"[Source {i}]"
-            if citation.section_name:
-                source_info += f" Section: {citation.section_name}"
-            if citation.page_number:
-                source_info += f" (Page {citation.page_number})"
+            if citation.section:
+                source_info += f" Section: {citation.section}"
+            if citation.page:
+                source_info += f" (Page {citation.page})"
             
-            formatted.append(f"{source_info}\n{citation.snippet}")
+            formatted.append(f"{source_info}\n{citation.chunk_text}")
         
         return "\n\n".join(formatted)
     
@@ -68,10 +68,10 @@ class CitationBuilder:
         """
         return [
             {
-                "source": f"{citation.policy_number}",
-                "section": citation.section_name or "General",
-                "page": citation.page_number,
-                "snippet": citation.snippet,
+                "source": f"{citation.policy_name}",
+                "section": citation.section or "General",
+                "page": citation.page,
+                "snippet": citation.chunk_text,
                 "relevance": round(citation.relevance_score, 3) if citation.relevance_score else None
             }
             for citation in citations
@@ -92,11 +92,11 @@ class CitationBuilder:
         
         sources_section = "\n\n**Sources:**"
         for i, citation in enumerate(citations, 1):
-            source_line = f"\n[{i}] {citation.policy_number}"
-            if citation.section_name:
-                source_line += f", {citation.section_name}"
-            if citation.page_number:
-                source_line += f" (Page {citation.page_number})"
+            source_line = f"\n[{i}] {citation.policy_name}"
+            if citation.section:
+                source_line += f", {citation.section}"
+            if citation.page:
+                source_line += f" (Page {citation.page})"
             sources_section += source_line
         
         return answer + sources_section

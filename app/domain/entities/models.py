@@ -77,12 +77,12 @@ class DocumentChunk:
 @dataclass
 class Citation:
     """Citation information for an answer."""
-    policy_number: str
-    section_type: Optional[str] = None
-    section_name: Optional[str] = None
-    page_number: Optional[int] = None
-    snippet: Optional[str] = None
-    relevance_score: Optional[float] = None
+    source_id: int
+    policy_name: str
+    section: Optional[str] = None
+    page: Optional[int] = None
+    chunk_text: str = ""
+    relevance_score: float = 0.0
 
 
 @dataclass
