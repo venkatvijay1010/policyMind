@@ -96,18 +96,18 @@ class OpenAIClient:
     
     async def classify_query(self, query: str) -> dict:
         """
-        Classify a query into document_qa, claims_sql, or hybrid.
+        Classify a query into document_qa, records_sql, or hybrid.
         """
         system_prompt = """You are a query classifier for an insurance policy Q&A system.
 
 Classify the user's question into one of these categories:
 - document_qa: Questions about policy coverage, exclusions, limits, terms, conditions, waiting periods
-- claims_sql: Questions about claims data, statistics, amounts, counts, trends (requires database query)
-- hybrid: Questions that need both policy documents AND claims data
+- records_sql: Questions about synthetic service-case data, statistics, amounts, counts, and trends
+- hybrid: Questions that need both policy documents AND service_cases data
 
 Return JSON with:
 {
-    "query_type": "document_qa" | "claims_sql" | "hybrid",
+    "query_type": "document_qa" | "records_sql" | "hybrid",
     "confidence": 0.0-1.0,
     "reasoning": "brief explanation"
 }"""
@@ -131,7 +131,7 @@ Return JSON with:
         """
         Generate SQL from natural language query.
         """
-        system_prompt = """You are a SQL generator for an insurance claims database.
+        system_prompt = """You are a SQL generator for an insurance service_cases database.
 
 Generate PostgreSQL queries that are:
 - Read-only (SELECT only, no INSERT/UPDATE/DELETE)

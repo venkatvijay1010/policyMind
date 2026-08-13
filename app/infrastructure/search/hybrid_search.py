@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from rank_bm25 import BM25Okapi
 import structlog
 
-from app.infrastructure.database.models import PolicyChunk, Policy
+from app.infrastructure.database.models import ContractPassage, Policy
 from app.infrastructure.llm.embeddings import get_embedding_service
 from app.domain.entities.models import DocumentChunk, SectionType
 from app.config import settings
@@ -37,7 +37,7 @@ class HybridSearch:
     async def vector_search(
         self,
         query: str,
-        policy_id: Optional[int] = None,
+        contract_id: Optional[int] = None,
         top_k: int = 10
     ) -> List[SearchResult]:
         """
@@ -49,32 +49,32 @@ class HybridSearch:
         # Build query with optional policy filter
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
         
-        if policy_id:
+        if contract_id:
             sql = text("""
                 SELECT 
-                    pc.id, pc.policy_id, pc.content, pc.section_type, 
-                    pc.section_name, pc.page_number, pc.chunk_index, pc.token_count,
+                    pc.id, pc.contract_id, pc.content, pc.topic_category,
+                    pc.topic_title, pc.source_page, pc.passage_order, pc.token_count,
                     1 - (pc.embedding <=> :embedding::vector) as similarity,
-                    p.policy_number
-                FROM policy_chunks pc
-                JOIN policies p ON pc.policy_id = p.id
-                WHERE pc.policy_id = :policy_id
+                    p.contract_ref
+                FROM contract_passages pc
+                JOIN benefit_contracts p ON pc.contract_id = p.id
+                WHERE pc.contract_id = :contract_id
                 ORDER BY pc.embedding <=> :embedding::vector
                 LIMIT :limit
             """)
             result = await self.session.execute(
                 sql, 
-                {"embedding": embedding_str, "policy_id": policy_id, "limit": top_k}
+                {"embedding": embedding_str, "contract_id": contract_id, "limit": top_k}
             )
         else:
             sql = text("""
                 SELECT 
-                    pc.id, pc.policy_id, pc.content, pc.section_type, 
-                    pc.section_name, pc.page_number, pc.chunk_index, pc.token_count,
+                    pc.id, pc.contract_id, pc.content, pc.topic_category,
+                    pc.topic_title, pc.source_page, pc.passage_order, pc.token_count,
                     1 - (pc.embedding <=> :embedding::vector) as similarity,
-                    p.policy_number
-                FROM policy_chunks pc
-                JOIN policies p ON pc.policy_id = p.id
+                    p.contract_ref
+                FROM contract_passages pc
+                JOIN benefit_contracts p ON pc.contract_id = p.id
                 ORDER BY pc.embedding <=> :embedding::vector
                 LIMIT :limit
             """)
@@ -89,12 +89,12 @@ class HybridSearch:
         for row in rows:
             chunk = DocumentChunk(
                 id=row.id,
-                policy_id=row.policy_id,
+                contract_id=row.contract_id,
                 content=row.content,
-                section_type=SectionType(row.section_type) if row.section_type else None,
-                section_name=row.section_name,
-                page_number=row.page_number,
-                chunk_index=row.chunk_index,
+                topic_category=SectionType(row.topic_category) if row.topic_category else None,
+                topic_title=row.topic_title,
+                source_page=row.source_page,
+                passage_order=row.passage_order,
                 token_count=row.token_count,
                 score=float(row.similarity)
             )
@@ -105,17 +105,17 @@ class HybridSearch:
     async def bm25_search(
         self,
         query: str,
-        policy_id: Optional[int] = None,
+        contract_id: Optional[int] = None,
         top_k: int = 10
     ) -> List[SearchResult]:
         """
         Perform BM25 keyword search.
         """
         # Fetch all chunks for BM25 (or filtered by policy)
-        if policy_id:
-            stmt = select(PolicyChunk).where(PolicyChunk.policy_id == policy_id)
+        if contract_id:
+            stmt = select(ContractPassage).where(ContractPassage.contract_id == contract_id)
         else:
-            stmt = select(PolicyChunk).limit(1000)  # Limit for performance
+            stmt = select(ContractPassage).limit(1000)  # Limit for performance
         
         result = await self.session.execute(stmt)
         chunks = result.scalars().all()
@@ -147,12 +147,12 @@ class HybridSearch:
                 normalized_score = score / max_score if max_score > 0 else 0
                 doc_chunk = DocumentChunk(
                     id=chunk.id,
-                    policy_id=chunk.policy_id,
+                    contract_id=chunk.contract_id,
                     content=chunk.content,
-                    section_type=SectionType(chunk.section_type) if chunk.section_type else None,
-                    section_name=chunk.section_name,
-                    page_number=chunk.page_number,
-                    chunk_index=chunk.chunk_index,
+                    topic_category=SectionType(chunk.topic_category) if chunk.topic_category else None,
+                    topic_title=chunk.topic_title,
+                    source_page=chunk.source_page,
+                    passage_order=chunk.passage_order,
                     token_count=chunk.token_count,
                     score=normalized_score
                 )
@@ -163,7 +163,7 @@ class HybridSearch:
     async def hybrid_search(
         self,
         query: str,
-        policy_id: Optional[int] = None,
+        contract_id: Optional[int] = None,
         top_k: int = 5,
         vector_weight: float = 0.7,
         bm25_weight: float = 0.3
@@ -173,8 +173,8 @@ class HybridSearch:
         Uses Reciprocal Rank Fusion (RRF) to merge results.
         """
         # Get results from both methods
-        vector_results = await self.vector_search(query, policy_id, top_k=top_k * 2)
-        bm25_results = await self.bm25_search(query, policy_id, top_k=top_k * 2)
+        vector_results = await self.vector_search(query, contract_id, top_k=top_k * 2)
+        bm25_results = await self.bm25_search(query, contract_id, top_k=top_k * 2)
         
         logger.debug(
             "Hybrid search results",
@@ -248,7 +248,7 @@ class HybridSearch:
     async def search(
         self,
         query: str,
-        policy_id: Optional[int] = None,
+        contract_id: Optional[int] = None,
         top_k: int = 5,
         method: str = "hybrid"  # 'vector', 'bm25', or 'hybrid'
     ) -> List[SearchResult]:
@@ -256,8 +256,8 @@ class HybridSearch:
         Main search method - dispatches to appropriate search type.
         """
         if method == "vector":
-            return await self.vector_search(query, policy_id, top_k)
+            return await self.vector_search(query, contract_id, top_k)
         elif method == "bm25":
-            return await self.bm25_search(query, policy_id, top_k)
+            return await self.bm25_search(query, contract_id, top_k)
         else:
-            return await self.hybrid_search(query, policy_id, top_k)
+            return await self.hybrid_search(query, contract_id, top_k)

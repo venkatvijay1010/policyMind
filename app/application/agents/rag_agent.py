@@ -35,7 +35,7 @@ class RAGAgent:
     async def retrieve(
         self,
         query: str,
-        policy_id: Optional[int] = None,
+        contract_id: Optional[int] = None,
         top_k: int = 5,
         search_method: str = "hybrid"
     ) -> RetrievalResult:
@@ -44,7 +44,7 @@ class RAGAgent:
         """
         results = await self.search.search(
             query=query,
-            policy_id=policy_id,
+            contract_id=contract_id,
             top_k=top_k,
             method=search_method
         )
@@ -73,10 +73,10 @@ class RAGAgent:
         context_parts = []
         for i, chunk in enumerate(chunks, 1):
             section_info = ""
-            if chunk.section_name:
-                section_info = f" - Section: {chunk.section_name}"
-            if chunk.page_number:
-                section_info += f" (Page {chunk.page_number})"
+            if chunk.topic_title:
+                section_info = f" - Section: {chunk.topic_title}"
+            if chunk.source_page:
+                section_info += f" (Page {chunk.source_page})"
             
             context_parts.append(f"[Source {i}{section_info}]\n{chunk.content}")
         
@@ -94,7 +94,7 @@ class RAGAgent:
         
         system_prompt = """You are an insurance policy expert assistant.
 
-Your task is to answer questions about insurance policies based on the provided context.
+Your task is to answer questions about insurance benefit_contracts based on the provided context.
 
 IMPORTANT RULES:
 1. ONLY use information from the provided context
@@ -117,7 +117,7 @@ Format your answer clearly and professionally."""
     async def answer(
         self,
         query: str,
-        policy_id: Optional[int] = None,
+        contract_id: Optional[int] = None,
         top_k: int = 5,
         search_method: str = "hybrid"
     ) -> QueryResult:
@@ -130,7 +130,7 @@ Format your answer clearly and professionally."""
         # 1. Retrieve relevant chunks
         retrieval_result = await self.retrieve(
             query=query,
-            policy_id=policy_id,
+            contract_id=contract_id,
             top_k=top_k,
             search_method=search_method
         )

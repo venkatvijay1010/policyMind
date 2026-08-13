@@ -2,116 +2,116 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Policies table
-CREATE TABLE IF NOT EXISTS policies (
+CREATE TABLE IF NOT EXISTS benefit_contracts (
     id SERIAL PRIMARY KEY,
-    policy_number VARCHAR(100) UNIQUE NOT NULL,
-    policy_name VARCHAR(255),
-    product_type VARCHAR(50) NOT NULL DEFAULT 'GROUP_HEALTH',
-    product_code VARCHAR(50),
-    insured_name VARCHAR(255),
-    industry_type VARCHAR(100),
-    policy_start_date DATE,
-    policy_end_date DATE,
-    total_lives INTEGER,
-    total_sum_insured DECIMAL(15,2),
-    premium_amount DECIMAL(15,2),
-    tpa_name VARCHAR(255),
-    document_s3_link VARCHAR(500),
+    contract_ref VARCHAR(100) UNIQUE NOT NULL,
+    contract_title VARCHAR(255),
+    plan_category VARCHAR(50) NOT NULL DEFAULT 'EMPLOYEE_BENEFITS',
+    plan_ref VARCHAR(50),
+    sponsor_label VARCHAR(255),
+    sponsor_sector VARCHAR(100),
+    effective_from DATE,
+    effective_until DATE,
+    participant_count INTEGER,
+    aggregate_benefit_cap DECIMAL(15,2),
+    contribution_amount DECIMAL(15,2),
+    service_partner_label VARCHAR(255),
+    source_document_uri VARCHAR(500),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Policy chunks table (for RAG)
-CREATE TABLE IF NOT EXISTS policy_chunks (
+CREATE TABLE IF NOT EXISTS contract_passages (
     id SERIAL PRIMARY KEY,
-    policy_id INTEGER REFERENCES policies(id) ON DELETE CASCADE,
+    contract_id INTEGER REFERENCES benefit_contracts(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    section_type VARCHAR(100),
-    section_name VARCHAR(255),
-    page_number INTEGER,
-    chunk_index INTEGER,
-    char_start INTEGER,
-    char_end INTEGER,
+    topic_category VARCHAR(100),
+    topic_title VARCHAR(255),
+    source_page INTEGER,
+    passage_order INTEGER,
+    source_offset_start INTEGER,
+    source_offset_end INTEGER,
     token_count INTEGER,
     embedding VECTOR(1536),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create index for vector similarity search
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON policy_chunks 
+CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON contract_passages
 USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Coverages table
-CREATE TABLE IF NOT EXISTS coverages (
+CREATE TABLE IF NOT EXISTS plan_benefits (
     id SERIAL PRIMARY KEY,
-    policy_id INTEGER REFERENCES policies(id) ON DELETE CASCADE,
-    coverage_code VARCHAR(50) NOT NULL,
-    coverage_name VARCHAR(255) NOT NULL,
-    coverage_type VARCHAR(50) DEFAULT 'BASE',
-    sum_type VARCHAR(50),
-    coverage_value DECIMAL(15,2),
-    coverage_limit DECIMAL(15,2),
-    sub_limit_percentage DECIMAL(5,2),
-    deductible_amount DECIMAL(15,2),
-    copay_percentage DECIMAL(5,2),
-    waiting_period_days INTEGER,
-    is_mandatory BOOLEAN DEFAULT true,
-    benefit_criteria TEXT,
-    exclusion_notes TEXT,
+    contract_id INTEGER REFERENCES benefit_contracts(id) ON DELETE CASCADE,
+    benefit_ref VARCHAR(50) NOT NULL,
+    benefit_title VARCHAR(255) NOT NULL,
+    benefit_tier VARCHAR(50) DEFAULT 'BASE',
+    limit_basis VARCHAR(50),
+    benefit_value DECIMAL(15,2),
+    benefit_cap DECIMAL(15,2),
+    inner_cap_percent DECIMAL(5,2),
+    fixed_share_amount DECIMAL(15,2),
+    percentage_share DECIMAL(5,2),
+    eligibility_delay_days INTEGER,
+    is_core_benefit BOOLEAN DEFAULT true,
+    eligibility_rules TEXT,
+    non_covered_notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Members table
-CREATE TABLE IF NOT EXISTS members (
+CREATE TABLE IF NOT EXISTS participants (
     id SERIAL PRIMARY KEY,
-    policy_id INTEGER REFERENCES policies(id) ON DELETE CASCADE,
-    member_id VARCHAR(50) UNIQUE,
-    employee_code VARCHAR(50),
-    member_name VARCHAR(255) NOT NULL,
-    relationship VARCHAR(50) NOT NULL DEFAULT 'SELF',
+    contract_id INTEGER REFERENCES benefit_contracts(id) ON DELETE CASCADE,
+    participant_ref VARCHAR(50) UNIQUE,
+    sponsor_person_ref VARCHAR(50),
+    participant_label VARCHAR(255) NOT NULL,
+    enrolment_role VARCHAR(50) NOT NULL DEFAULT 'SELF',
     gender VARCHAR(10),
-    date_of_birth DATE,
+    birth_date DATE,
     age INTEGER,
-    sum_insured DECIMAL(15,2),
-    premium_amount DECIMAL(15,2),
-    package_name VARCHAR(100),
-    enrollment_date DATE,
-    risk_inception_date DATE,
-    risk_expiry_date DATE,
+    benefit_ceiling DECIMAL(15,2),
+    contribution_amount DECIMAL(15,2),
+    plan_variant VARCHAR(100),
+    enrolled_on DATE,
+    eligibility_from DATE,
+    eligibility_until DATE,
     status VARCHAR(50) DEFAULT 'ACTIVE',
     city VARCHAR(100),
     state VARCHAR(100),
-    pincode VARCHAR(10),
+    postal_code VARCHAR(10),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Claims table
-CREATE TABLE IF NOT EXISTS claims (
+CREATE TABLE IF NOT EXISTS service_cases (
     id SERIAL PRIMARY KEY,
-    claim_number VARCHAR(100) UNIQUE NOT NULL,
-    policy_id INTEGER REFERENCES policies(id) ON DELETE CASCADE,
-    member_id INTEGER REFERENCES members(id) ON DELETE CASCADE,
-    claim_type VARCHAR(50) NOT NULL DEFAULT 'CASHLESS',
-    claim_category VARCHAR(50) DEFAULT 'IPD',
-    diagnosis_code VARCHAR(20),
-    diagnosis_description VARCHAR(500),
-    treatment_type VARCHAR(255),
-    hospital_name VARCHAR(255),
-    hospital_city VARCHAR(100),
-    hospital_state VARCHAR(100),
-    hospital_rohini_code VARCHAR(50),
-    admission_date DATE,
-    discharge_date DATE,
-    claim_amount DECIMAL(15,2),
-    approved_amount DECIMAL(15,2),
-    deductible_applied DECIMAL(15,2),
-    copay_applied DECIMAL(15,2),
-    net_payable DECIMAL(15,2),
-    claim_status VARCHAR(50) DEFAULT 'REGISTERED',
-    registration_date DATE,
-    settlement_date DATE,
-    rejection_reason TEXT,
-    adjuster_notes TEXT,
+    case_ref VARCHAR(100) UNIQUE NOT NULL,
+    contract_id INTEGER REFERENCES benefit_contracts(id) ON DELETE CASCADE,
+    participant_id INTEGER REFERENCES participants(id) ON DELETE CASCADE,
+    funding_mode VARCHAR(50) NOT NULL DEFAULT 'DIRECT_BILLING',
+    care_setting VARCHAR(50) DEFAULT 'FACILITY_STAY',
+    condition_code VARCHAR(20),
+    condition_label VARCHAR(500),
+    service_category VARCHAR(255),
+    provider_label VARCHAR(255),
+    provider_city VARCHAR(100),
+    provider_region VARCHAR(100),
+    provider_registry_ref VARCHAR(50),
+    service_started_on DATE,
+    service_ended_on DATE,
+    requested_amount DECIMAL(15,2),
+    eligible_amount DECIMAL(15,2),
+    fixed_share_applied DECIMAL(15,2),
+    percentage_share_applied DECIMAL(15,2),
+    payable_amount DECIMAL(15,2),
+    case_status VARCHAR(50) DEFAULT 'OPENED',
+    submitted_on DATE,
+    resolved_on DATE,
+    decision_reason TEXT,
+    reviewer_notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -127,19 +127,19 @@ CREATE TABLE IF NOT EXISTS icd_codes (
     typical_treatment_cost DECIMAL(15,2)
 );
 
--- Hospitals table
-CREATE TABLE IF NOT EXISTS hospitals (
+-- CareProviders table
+CREATE TABLE IF NOT EXISTS care_providers (
     id SERIAL PRIMARY KEY,
-    rohini_code VARCHAR(50) UNIQUE,
-    hospital_name VARCHAR(255) NOT NULL,
-    hospital_type VARCHAR(50) DEFAULT 'NETWORK',
+    registry_ref VARCHAR(50) UNIQUE,
+    provider_label VARCHAR(255) NOT NULL,
+    provider_kind VARCHAR(50) DEFAULT 'PARTICIPATING',
     address TEXT,
     city VARCHAR(100),
     state VARCHAR(100),
-    pincode VARCHAR(10),
+    postal_code VARCHAR(10),
     tier VARCHAR(20),
     is_active BOOLEAN DEFAULT true,
-    is_network_hospital BOOLEAN DEFAULT true,
+    is_participating BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS eval_questions (
     ground_truth_answer TEXT NOT NULL,
     query_type VARCHAR(50) NOT NULL DEFAULT 'DOCUMENT_QA',
     difficulty VARCHAR(20) DEFAULT 'MEDIUM',
-    relevant_policy_ids INTEGER[],
+    relevant_contract_ids INTEGER[],
     relevant_chunk_ids INTEGER[],
     expected_sql TEXT,
     metadata JSONB,
@@ -190,13 +190,13 @@ CREATE TABLE IF NOT EXISTS query_logs (
 );
 
 -- Create indexes for common queries
-CREATE INDEX IF NOT EXISTS idx_claims_policy ON claims(policy_id);
-CREATE INDEX IF NOT EXISTS idx_claims_member ON claims(member_id);
-CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(claim_status);
-CREATE INDEX IF NOT EXISTS idx_claims_date ON claims(registration_date);
-CREATE INDEX IF NOT EXISTS idx_members_policy ON members(policy_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_policy ON policy_chunks(policy_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_section ON policy_chunks(section_type);
+CREATE INDEX IF NOT EXISTS idx_service_cases_policy ON service_cases(contract_id);
+CREATE INDEX IF NOT EXISTS idx_service_cases_participant ON service_cases(participant_id);
+CREATE INDEX IF NOT EXISTS idx_service_cases_status ON service_cases(case_status);
+CREATE INDEX IF NOT EXISTS idx_service_cases_date ON service_cases(submitted_on);
+CREATE INDEX IF NOT EXISTS idx_participants_policy ON participants(contract_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_policy ON contract_passages(contract_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_section ON contract_passages(topic_category);
 
 -- Insert sample ICD codes
 INSERT INTO icd_codes (code, description, category, is_chronic, typical_hospitalization_days, typical_treatment_cost) VALUES
@@ -212,7 +212,7 @@ INSERT INTO icd_codes (code, description, category, is_chronic, typical_hospital
 ('S72.001A', 'Fracture of unspecified part of neck of femur', 'Injury', false, 10, 200000)
 ON CONFLICT (code) DO NOTHING;
 
-COMMENT ON TABLE policies IS 'Master table for insurance policies';
-COMMENT ON TABLE policy_chunks IS 'Document chunks with vector embeddings for RAG';
-COMMENT ON TABLE claims IS 'Insurance claims records';
+COMMENT ON TABLE benefit_contracts IS 'Master table for insurance benefit_contracts';
+COMMENT ON TABLE contract_passages IS 'Document chunks with vector embeddings for RAG';
+COMMENT ON TABLE service_cases IS 'Insurance service_cases records';
 COMMENT ON TABLE eval_questions IS 'Evaluation dataset for RAG system testing';

@@ -15,7 +15,7 @@ class QueryClassifier:
     Classifies user queries to route them to the appropriate agent.
     
     - document_qa: Questions about policy terms, coverage, exclusions
-    - claims_sql: Questions requiring database queries on claims data
+    - records_sql: Questions requiring database queries on synthetic service-case data
     - hybrid: Questions needing both document and data context
     """
     
@@ -25,18 +25,18 @@ class QueryClassifier:
         # Keywords that suggest SQL queries
         self.sql_keywords = {
             "how many", "total", "count", "sum", "average", "avg",
-            "claims", "claim amount", "statistics", "trend",
+            "service case", "service_cases", "requested amount", "statistics", "trend",
             "in 2024", "in 2023", "last year", "this quarter",
-            "by status", "by hospital", "top 10", "breakdown"
+            "by status", "by provider", "top 10", "breakdown"
         }
         
         # Keywords that suggest document queries
         self.doc_keywords = {
             "covered", "coverage", "exclusion", "excluded",
-            "waiting period", "limit", "sub-limit", "deductible",
-            "copay", "co-payment", "what is", "is there",
-            "policy terms", "conditions", "eligibility",
-            "pre-existing", "documents required", "claim process"
+            "eligibility delay", "waiting period", "limit", "inner cap", "fixed share",
+            "percentage share",
+            "contract terms", "conditions", "eligibility",
+            "pre-existing", "documents required", "service-case process"
         }
     
     async def classify(self, query: str) -> ClassificationResult:
@@ -60,9 +60,9 @@ class QueryClassifier:
         # If keywords are clear, skip LLM call
         if sql_score > 0 and doc_score == 0:
             return ClassificationResult(
-                query_type=QueryType.CLAIMS_SQL,
+                query_type=QueryType.RECORDS_SQL,
                 confidence=0.9,
-                reasoning="Query contains claims/statistics keywords"
+                reasoning="Query contains service_cases/statistics keywords"
             )
         
         if doc_score > 0 and sql_score == 0:

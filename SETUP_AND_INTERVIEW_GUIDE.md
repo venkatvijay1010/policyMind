@@ -70,14 +70,14 @@ docker compose exec app python data/seed/seed_database.py
 curl http://localhost:8000/health
 
 # Test a document query
-curl -X POST "http://localhost:8000/api/v1/ask" \
+curl -X POST "http://localhost:8000/api/v2/insights/query" \
   -H "Content-Type: application/json" \
-  -d '{"query": "What is the maternity coverage limit?"}'
+  -d '{"prompt": "What is the family-support coverage limit?"}'
 
 # Test a SQL query
-curl -X POST "http://localhost:8000/api/v1/ask" \
+curl -X POST "http://localhost:8000/api/v2/insights/query" \
   -H "Content-Type: application/json" \
-  -d '{"query": "How many claims were rejected?"}'
+  -d '{"prompt": "How many service_cases were rejected?"}'
 ```
 
 ### Useful Docker Commands
@@ -115,7 +115,7 @@ docker compose logs db
 
 **PolicyMind** is an intelligent question-answering system for insurance domain that combines:
 - **RAG (Retrieval-Augmented Generation)** for document Q&A
-- **Text-to-SQL** for claims data analysis
+- **Text-to-SQL** for service_cases data analysis
 - **LangGraph** for agent orchestration
 
 The system automatically classifies user queries and routes them to the appropriate agent, providing accurate answers with citations.
@@ -127,12 +127,12 @@ The system automatically classifies user queries and routes them to the appropri
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      User Query                                  │
-│         "What is the maternity coverage limit?"                  │
+│         "What is the family-support coverage limit?"                  │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                 1. FastAPI Endpoint (/api/v1/ask)               │
+│                 1. FastAPI Endpoint (/api/v2/insights/query)               │
 │                    - Request validation (Pydantic)               │
 │                    - Async request handling                      │
 └─────────────────────────────┬───────────────────────────────────┘
@@ -142,7 +142,7 @@ The system automatically classifies user queries and routes them to the appropri
 │                 2. Query Classifier Agent                        │
 │    - Keyword-based fast classification                          │
 │    - LLM fallback for ambiguous queries                         │
-│    - Output: document_qa | claims_sql | hybrid                  │
+│    - Output: document_qa | records_sql | hybrid                  │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
               ┌───────────────┼───────────────┐
@@ -243,7 +243,7 @@ policymind/
 ├── data/
 │   ├── generators/
 │   │   ├── policy_generator.py   # Generate sample policy documents
-│   │   ├── claims_generator.py   # Generate synthetic claims data
+│   │   ├── service_cases_generator.py   # Generate synthetic service_cases data
 │   │   └── eval_generator.py     # Generate evaluation questions
 │   └── seed/
 │       └── seed_database.py      # Database seeding script
@@ -313,15 +313,15 @@ API Layer → Application Layer → Domain Layer → Infrastructure Layer
 
 ```sql
 -- Core Tables
-policies          -- Insurance policy metadata
-policy_chunks     -- Chunked documents with embeddings (pgvector)
-members           -- Insured members
-claims            -- Insurance claims with amounts, status
-coverages         -- Policy coverage details
+benefit_contracts          -- Insurance policy metadata
+contract_passages     -- Chunked documents with embeddings (pgvector)
+participants           -- Insured participants
+service_cases            -- Insurance service_cases with amounts, status
+plan_benefits         -- Policy coverage details
 
 -- Reference Tables
 icd_codes         -- ICD-10 diagnosis codes
-hospitals         -- Hospital network information
+care_providers         -- CareProvider network information
 
 -- Evaluation Tables
 eval_questions    -- Test questions for evaluation
@@ -431,7 +431,7 @@ async def get_db_session():
     async with async_session_factory() as session:
         yield session
 
-@router.post("/ask")
+@router.post("/insights/query")
 async def ask(db: AsyncSession = Depends(get_db_session)):
     # db is injected, handles cleanup automatically
 ```
@@ -505,21 +505,21 @@ services:
 
 **Q21: Explain insurance claim processing flow.**
 > 1. Member admitted to hospital
-> 2. Claim registered (REGISTERED)
-> 3. Documents verified (UNDER_PROCESS)
+> 2. Claim registered (OPENED)
+> 3. Documents verified (IN_REVIEW)
 > 4. Medical review, amount calculation
-> 5. Approval/Rejection decision (APPROVED/REJECTED)
-> 6. Payment processing (SETTLED)
+> 5. Approval/Rejection decision (ELIGIBLE/DECLINED)
+> 6. Payment processing (RESOLVED)
 
-**Q22: What's the difference between copay and deductible?**
-> - **Deductible**: Fixed amount you pay first (₹5,000)
-> - **Copay**: Percentage you pay of remaining (20%)
-> - Example: ₹100,000 claim → ₹5,000 deductible → ₹95,000 × 20% = ₹19,000 copay → Insurer pays ₹76,000
+**Q22: What's the difference between percentage share and fixed share?**
+> - **Fixed Share**: Fixed amount you pay first (CU 5,000)
+> - **Percentage Share**: Percentage you pay of remaining (20%)
+> - Example: CU 100,000 claim → CU 5,000 fixed share → CU 95,000 × 20% = CU 19,000 percentage share → Insurer pays CU 76,000
 
 **Q23: What are ICD-10 codes?**
 > International Classification of Diseases, 10th revision
 > - Standardized diagnosis codes (e.g., J18.9 = Pneumonia)
-> - Used for claims processing, statistics, billing
+> - Used for service_cases processing, statistics, billing
 > - Required by insurance regulations
 
 ---
@@ -529,25 +529,25 @@ services:
 ### Key Endpoints
 ```
 GET  /health              - Health check
-POST /api/v1/ask          - Main query (auto-routes)
-POST /api/v1/ask/classify - Classify query type
-POST /api/v1/ask/rag      - Force RAG agent
-POST /api/v1/ask/sql      - Force SQL agent
-POST /api/v1/ingest       - Ingest documents
-POST /api/v1/eval/run     - Run evaluation
+POST /api/v2/insights/query          - Main query (auto-routes)
+POST /api/v2/insights/route-preview - Classify query type
+POST /api/v2/insights/document-only      - Force RAG agent
+POST /api/v2/insights/records-only      - Force SQL agent
+PUT  /api/v2/knowledge/scopes/{scope_key}/source - Index contract sources
+POST /api/v2/eval/run     - Run evaluation
 ```
 
 ### Sample Queries to Demo
 ```bash
 # Document Q&A
-"What is the maternity coverage limit?"
+"What is the family-support coverage limit?"
 "What are the permanent exclusions in the policy?"
 "What is the waiting period for pre-existing diseases?"
 
 # Claims SQL
-"How many claims were rejected?"
+"How many service_cases were rejected?"
 "What is the average claim amount by hospital?"
-"Show total claims by status"
+"Show total service_cases by status"
 
 # Hybrid
 "What's our rejection rate for pre-existing conditions and what does the policy say about them?"

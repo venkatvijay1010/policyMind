@@ -13,7 +13,7 @@ class CoverageCalculation:
     deductible: Decimal
     copay_amount: Decimal
     sub_limit_applied: Decimal
-    net_payable: Decimal
+    payable_amount: Decimal
     calculation_breakdown: str
 
 
@@ -27,13 +27,13 @@ class RoomRentResult:
 
 @dataclass
 class ClaimCalculationResult:
-    """Result of full claim calculation."""
-    claim_amount: float
-    allowed_claim: float
+    """Result of a synthetic service-case calculation."""
+    requested_amount: float
+    eligible_base: float
     deductible: float
     copay: float
     room_rent_deduction: float
-    net_payable: float
+    payable_amount: float
 
 
 # Plan-specific configurations
@@ -69,7 +69,7 @@ class CoverageCalculator:
     
     @staticmethod
     def calculate_room_rent_limit(
-        sum_insured: Decimal,
+        benefit_ceiling: Decimal,
         room_rent_percentage: Decimal = Decimal("0.01"),
         actual_rent: Decimal = Decimal("0")
     ) -> Decimal:
@@ -77,41 +77,41 @@ class CoverageCalculator:
         Calculate room rent limit.
         Typically 1% of Sum Insured per day or actual, whichever is lower.
         """
-        limit = sum_insured * room_rent_percentage
+        limit = benefit_ceiling * room_rent_percentage
         if actual_rent > 0:
             return min(limit, actual_rent)
         return limit.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     
     @staticmethod
     def calculate_icu_limit(
-        sum_insured: Decimal,
+        benefit_ceiling: Decimal,
         icu_percentage: Decimal = Decimal("0.02")
     ) -> Decimal:
         """
         Calculate ICU charges limit.
         Typically 2% of Sum Insured per day.
         """
-        return (sum_insured * icu_percentage).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return (benefit_ceiling * icu_percentage).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     
     @staticmethod
     def calculate_copay(
-        claim_amount: Decimal,
-        copay_percentage: Decimal,
+        requested_amount: Decimal,
+        percentage_share: Decimal,
         deductible: Decimal = Decimal("0")
     ) -> Decimal:
         """
         Calculate co-payment amount.
-        Co-pay is applied on (claim_amount - deductible).
+        Co-pay is applied on (requested_amount - deductible).
         """
-        amount_after_deductible = max(claim_amount - deductible, Decimal("0"))
-        copay = amount_after_deductible * (copay_percentage / Decimal("100"))
+        amount_after_deductible = max(requested_amount - deductible, Decimal("0"))
+        copay = amount_after_deductible * (percentage_share / Decimal("100"))
         return copay.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     
     @staticmethod
-    def calculate_net_payable(
-        claim_amount: Decimal,
+    def calculate_payable_amount(
+        requested_amount: Decimal,
         deductible: Decimal = Decimal("0"),
-        copay_percentage: Decimal = Decimal("0"),
+        percentage_share: Decimal = Decimal("0"),
         sub_limit: Optional[Decimal] = None
     ) -> CoverageCalculation:
         """
@@ -123,11 +123,11 @@ class CoverageCalculator:
         3. Apply co-pay on remaining
         """
         # Step 1: Apply sub-limit
-        if sub_limit and claim_amount > sub_limit:
+        if sub_limit and requested_amount > sub_limit:
             amount_after_sublimit = sub_limit
-            sublimit_applied = claim_amount - sub_limit
+            sublimit_applied = requested_amount - sub_limit
         else:
-            amount_after_sublimit = claim_amount
+            amount_after_sublimit = requested_amount
             sublimit_applied = Decimal("0")
         
         # Step 2: Deduct deductible
@@ -135,48 +135,48 @@ class CoverageCalculator:
         
         # Step 3: Calculate co-pay
         copay_amount = Decimal("0")
-        if copay_percentage > 0:
-            copay_amount = amount_after_deductible * (copay_percentage / Decimal("100"))
+        if percentage_share > 0:
+            copay_amount = amount_after_deductible * (percentage_share / Decimal("100"))
         
         # Final net payable
-        net_payable = amount_after_deductible - copay_amount
-        net_payable = net_payable.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        payable_amount = amount_after_deductible - copay_amount
+        payable_amount = payable_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         
         # Build breakdown
         breakdown = f"""
-Claim Amount: ₹{claim_amount:,.2f}
-- Sub-limit Applied: ₹{sublimit_applied:,.2f}
-= After Sub-limit: ₹{amount_after_sublimit:,.2f}
-- Deductible: ₹{deductible:,.2f}
-= After Deductible: ₹{amount_after_deductible:,.2f}
-- Co-pay ({copay_percentage}%): ₹{copay_amount:,.2f}
-= Net Payable: ₹{net_payable:,.2f}
+Requested Amount: CU {requested_amount:,.2f}
+- Inner Cap Applied: CU {sublimit_applied:,.2f}
+= After Inner Cap: CU {amount_after_sublimit:,.2f}
+- Fixed Share: CU {deductible:,.2f}
+= After Fixed Share: CU {amount_after_deductible:,.2f}
+- Percentage Share ({percentage_share}%): CU {copay_amount:,.2f}
+= Payable Amount: CU {payable_amount:,.2f}
         """.strip()
         
         return CoverageCalculation(
-            gross_amount=claim_amount,
+            gross_amount=requested_amount,
             deductible=deductible,
             copay_amount=copay_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
             sub_limit_applied=sublimit_applied,
-            net_payable=net_payable,
+            payable_amount=payable_amount,
             calculation_breakdown=breakdown
         )
     
     @staticmethod
     def calculate_aggregate_si_usage(
-        sum_insured: Decimal,
-        claims_paid: List[Decimal]
+        benefit_ceiling: Decimal,
+        service_cases_paid: List[Decimal]
     ) -> dict:
         """
         Calculate aggregate Sum Insured usage.
         """
-        total_claimed = sum(claims_paid)
-        remaining = max(sum_insured - total_claimed, Decimal("0"))
-        usage_percentage = (total_claimed / sum_insured * 100) if sum_insured > 0 else Decimal("0")
+        total_used = sum(service_cases_paid)
+        remaining = max(benefit_ceiling - total_used, Decimal("0"))
+        usage_percentage = (total_used / benefit_ceiling * 100) if benefit_ceiling > 0 else Decimal("0")
         
         return {
-            "sum_insured": float(sum_insured),
-            "total_claimed": float(total_claimed),
+            "benefit_ceiling": float(benefit_ceiling),
+            "total_used": float(total_used),
             "remaining": float(remaining),
             "usage_percentage": float(usage_percentage.quantize(Decimal("0.01"))),
             "is_exhausted": remaining <= 0
@@ -184,36 +184,36 @@ Claim Amount: ₹{claim_amount:,.2f}
     
     @staticmethod
     def is_within_waiting_period(
-        policy_start_date,
-        claim_date,
-        waiting_period_days: int
+        effective_from,
+        service_date,
+        eligibility_delay_days: int
     ) -> dict:
         """
-        Check if a claim falls within the waiting period.
+        Check whether a service date falls within the eligibility delay.
         """
         from datetime import date, timedelta
         
-        if isinstance(policy_start_date, str):
-            policy_start_date = date.fromisoformat(policy_start_date)
-        if isinstance(claim_date, str):
-            claim_date = date.fromisoformat(claim_date)
+        if isinstance(effective_from, str):
+            effective_from = date.fromisoformat(effective_from)
+        if isinstance(service_date, str):
+            service_date = date.fromisoformat(service_date)
         
-        days_since_inception = (claim_date - policy_start_date).days
-        waiting_period_end = policy_start_date + timedelta(days=waiting_period_days)
-        is_within = days_since_inception < waiting_period_days
+        days_since_inception = (service_date - effective_from).days
+        waiting_period_end = effective_from + timedelta(days=eligibility_delay_days)
+        is_within = days_since_inception < eligibility_delay_days
         
         return {
             "is_within_waiting_period": is_within,
             "days_since_inception": days_since_inception,
-            "waiting_period_days": waiting_period_days,
+            "eligibility_delay_days": eligibility_delay_days,
             "waiting_period_end_date": waiting_period_end.isoformat(),
-            "days_remaining": max(waiting_period_days - days_since_inception, 0) if is_within else 0
+            "days_remaining": max(eligibility_delay_days - days_since_inception, 0) if is_within else 0
         }
     
     def calculate_room_rent(
         self,
         actual_room_rent: float,
-        sum_insured: float,
+        benefit_ceiling: float,
         plan_type: str = "standard",
         daily_limit: Optional[float] = None
     ) -> RoomRentResult:
@@ -231,7 +231,7 @@ Claim Amount: ₹{claim_amount:,.2f}
             )
         
         # Calculate limit based on percentage of SI
-        percent_limit = sum_insured * plan["room_rent_percent"]
+        percent_limit = benefit_ceiling * plan["room_rent_percent"]
         
         # Use provided daily limit or plan default
         fixed_limit = daily_limit or plan["room_rent_daily_limit"]
@@ -275,24 +275,24 @@ Claim Amount: ₹{claim_amount:,.2f}
     
     def calculate_copay(
         self,
-        claim_amount: float,
+        requested_amount: float,
         plan_type: str = "standard",
-        is_network_hospital: bool = True
+        is_participating_provider: bool = True
     ) -> float:
         """
         Calculate copay based on plan type and hospital network.
         """
         plan = PLAN_CONFIGS.get(plan_type.lower(), PLAN_CONFIGS["standard"])
         
-        copay = claim_amount * plan["copay_percent"]
+        copay = requested_amount * plan["copay_percent"]
         
         # Non-network hospital: additional 20% copay
-        if not is_network_hospital:
-            copay += claim_amount * 0.20
+        if not is_participating_provider:
+            copay += requested_amount * 0.20
         
-        # High-value claim (> 10 lakhs): additional 10% copay
-        if claim_amount > 1000000:
-            copay += claim_amount * 0.10
+        # High-value service case: additional 10% percentage share
+        if requested_amount > 1000000:
+            copay += requested_amount * 0.10
         
         return copay
     
@@ -303,11 +303,11 @@ Claim Amount: ₹{claim_amount:,.2f}
         plan = PLAN_CONFIGS.get(plan_type.lower(), PLAN_CONFIGS["standard"])
         return float(plan["deductible"])
     
-    def calculate_net_payable(
+    def calculate_payable_amount(
         self,
-        claim_amount: float,
+        requested_amount: float,
         plan_type: str = "standard",
-        sum_insured: float = 500000,
+        benefit_ceiling: float = 500000,
         actual_room_rent: Optional[float] = None,
         room_rent_limit: Optional[float] = None
     ) -> ClaimCalculationResult:
@@ -317,11 +317,11 @@ Claim Amount: ₹{claim_amount:,.2f}
         plan = PLAN_CONFIGS.get(plan_type.lower(), PLAN_CONFIGS["standard"])
         
         # Cap at sum insured
-        allowed_claim = min(claim_amount, sum_insured)
+        eligible_base = min(requested_amount, benefit_ceiling)
         
         # Calculate deductible
         deductible = float(plan["deductible"])
-        after_deductible = max(0, allowed_claim - deductible)
+        after_deductible = max(0, eligible_base - deductible)
         
         # Calculate copay
         copay = after_deductible * plan["copay_percent"]
@@ -333,13 +333,13 @@ Claim Amount: ₹{claim_amount:,.2f}
             room_rent_deduction = after_deductible * (1 - proportion)
         
         # Final net payable
-        net_payable = max(0, after_deductible - copay - room_rent_deduction)
+        payable_amount = max(0, after_deductible - copay - room_rent_deduction)
         
         return ClaimCalculationResult(
-            claim_amount=claim_amount,
-            allowed_claim=allowed_claim,
+            requested_amount=requested_amount,
+            eligible_base=eligible_base,
             deductible=deductible,
             copay=copay,
             room_rent_deduction=room_rent_deduction,
-            net_payable=net_payable
+            payable_amount=payable_amount
         )

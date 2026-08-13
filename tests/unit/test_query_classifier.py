@@ -19,7 +19,7 @@ class TestQueryClassifier:
     async def test_classify_document_query_keywords(self):
         """Test classification of document queries by keywords."""
         queries = [
-            "What is covered under maternity?",
+            "What is covered under family support?",
             "What are the exclusions?",
             "Is dental treatment covered?",
             "What is the waiting period for pre-existing diseases?",
@@ -34,24 +34,24 @@ class TestQueryClassifier:
     async def test_classify_sql_query_keywords(self):
         """Test classification of SQL queries by keywords."""
         queries = [
-            "How many claims were filed in 2024?",
-            "What is the total claim amount by status?",
-            "Show top 10 hospitals by claims",
-            "What is the average claim amount?",
+            "How many service cases were opened in 2024?",
+            "What is the total requested amount by status?",
+            "Show top 10 providers by service cases",
+            "What is the average requested amount?",
         ]
         
         for query in queries:
             result = await self.classifier.classify(query)
-            assert result.query_type == QueryType.CLAIMS_SQL
+            assert result.query_type == QueryType.RECORDS_SQL
             assert result.confidence >= 0.7
     
     @pytest.mark.asyncio
     async def test_sql_safety_check_safe(self):
         """Test SQL safety check allows safe queries."""
         safe_queries = [
-            "How many claims were rejected?",
-            "What is the average claim amount?",
-            "Show claims by hospital",
+            "How many service cases were declined?",
+            "What is the average requested amount?",
+            "Show service cases by provider",
         ]
         
         for query in safe_queries:
@@ -61,11 +61,11 @@ class TestQueryClassifier:
     async def test_sql_safety_check_unsafe(self):
         """Test SQL safety check blocks dangerous queries."""
         unsafe_queries = [
-            "DROP TABLE claims",
-            "DELETE FROM policies",
-            "INSERT INTO claims VALUES",
-            "UPDATE members SET status",
-            "select * from claims; --",
+            "DROP TABLE service_cases",
+            "DELETE FROM benefit_contracts",
+            "INSERT INTO service_cases VALUES",
+            "UPDATE participants SET status",
+            "select * from service_cases; --",
         ]
         
         for query in unsafe_queries:
@@ -84,7 +84,7 @@ class TestQueryClassifier:
             
             # This query has both doc and sql keywords
             result = await self.classifier.classify(
-                "What's our rejection rate and what does the policy say about exclusions?"
+                "What do the case statistics show and what do the contract terms say about exclusions?"
             )
             
             # Should use LLM for ambiguous queries

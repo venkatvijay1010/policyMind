@@ -17,45 +17,45 @@ from app.config import settings
 
 class Policy(Base):
     """Insurance policy model."""
-    __tablename__ = "policies"
+    __tablename__ = "benefit_contracts"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    policy_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    policy_name: Mapped[Optional[str]] = mapped_column(String(255))
-    product_type: Mapped[str] = mapped_column(String(50), default="GROUP_HEALTH")
-    product_code: Mapped[Optional[str]] = mapped_column(String(50))
-    insured_name: Mapped[Optional[str]] = mapped_column(String(255))
-    industry_type: Mapped[Optional[str]] = mapped_column(String(100))
-    policy_start_date: Mapped[Optional[date]] = mapped_column(Date)
-    policy_end_date: Mapped[Optional[date]] = mapped_column(Date)
-    total_lives: Mapped[Optional[int]] = mapped_column(Integer)
-    total_sum_insured: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    premium_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    tpa_name: Mapped[Optional[str]] = mapped_column(String(255))
-    document_s3_link: Mapped[Optional[str]] = mapped_column(String(500))
+    contract_ref: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    contract_title: Mapped[Optional[str]] = mapped_column(String(255))
+    plan_category: Mapped[str] = mapped_column(String(50), default="EMPLOYEE_BENEFITS")
+    plan_ref: Mapped[Optional[str]] = mapped_column(String(50))
+    sponsor_label: Mapped[Optional[str]] = mapped_column(String(255))
+    sponsor_sector: Mapped[Optional[str]] = mapped_column(String(100))
+    effective_from: Mapped[Optional[date]] = mapped_column(Date)
+    effective_until: Mapped[Optional[date]] = mapped_column(Date)
+    participant_count: Mapped[Optional[int]] = mapped_column(Integer)
+    aggregate_benefit_cap: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    contribution_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    service_partner_label: Mapped[Optional[str]] = mapped_column(String(255))
+    source_document_uri: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    chunks: Mapped[List["PolicyChunk"]] = relationship("PolicyChunk", back_populates="policy", cascade="all, delete-orphan")
-    coverages: Mapped[List["Coverage"]] = relationship("Coverage", back_populates="policy", cascade="all, delete-orphan")
-    members: Mapped[List["Member"]] = relationship("Member", back_populates="policy", cascade="all, delete-orphan")
-    claims: Mapped[List["Claim"]] = relationship("Claim", back_populates="policy", cascade="all, delete-orphan")
+    chunks: Mapped[List["ContractPassage"]] = relationship("ContractPassage", back_populates="policy", cascade="all, delete-orphan")
+    plan_benefits: Mapped[List["Coverage"]] = relationship("Coverage", back_populates="policy", cascade="all, delete-orphan")
+    participants: Mapped[List["Member"]] = relationship("Member", back_populates="policy", cascade="all, delete-orphan")
+    service_cases: Mapped[List["Claim"]] = relationship("Claim", back_populates="policy", cascade="all, delete-orphan")
 
 
-class PolicyChunk(Base):
+class ContractPassage(Base):
     """Policy document chunks for RAG."""
-    __tablename__ = "policy_chunks"
+    __tablename__ = "contract_passages"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    policy_id: Mapped[int] = mapped_column(Integer, ForeignKey("policies.id", ondelete="CASCADE"))
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("benefit_contracts.id", ondelete="CASCADE"))
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    section_type: Mapped[Optional[str]] = mapped_column(String(100))
-    section_name: Mapped[Optional[str]] = mapped_column(String(255))
-    page_number: Mapped[Optional[int]] = mapped_column(Integer)
-    chunk_index: Mapped[Optional[int]] = mapped_column(Integer)
-    char_start: Mapped[Optional[int]] = mapped_column(Integer)
-    char_end: Mapped[Optional[int]] = mapped_column(Integer)
+    topic_category: Mapped[Optional[str]] = mapped_column(String(100))
+    topic_title: Mapped[Optional[str]] = mapped_column(String(255))
+    source_page: Mapped[Optional[int]] = mapped_column(Integer)
+    passage_order: Mapped[Optional[int]] = mapped_column(Integer)
+    source_offset_start: Mapped[Optional[int]] = mapped_column(Integer)
+    source_offset_end: Mapped[Optional[int]] = mapped_column(Integer)
     token_count: Mapped[Optional[int]] = mapped_column(Integer)
     embedding: Mapped[Optional[List[float]]] = mapped_column(Vector(settings.embedding_dimension))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -66,94 +66,94 @@ class PolicyChunk(Base):
 
 class Coverage(Base):
     """Coverage details for a policy."""
-    __tablename__ = "coverages"
+    __tablename__ = "plan_benefits"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    policy_id: Mapped[int] = mapped_column(Integer, ForeignKey("policies.id", ondelete="CASCADE"))
-    coverage_code: Mapped[str] = mapped_column(String(50), nullable=False)
-    coverage_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    coverage_type: Mapped[str] = mapped_column(String(50), default="BASE")
-    sum_type: Mapped[Optional[str]] = mapped_column(String(50))
-    coverage_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    coverage_limit: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    sub_limit_percentage: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    deductible_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    copay_percentage: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
-    waiting_period_days: Mapped[Optional[int]] = mapped_column(Integer)
-    is_mandatory: Mapped[bool] = mapped_column(Boolean, default=True)
-    benefit_criteria: Mapped[Optional[str]] = mapped_column(Text)
-    exclusion_notes: Mapped[Optional[str]] = mapped_column(Text)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("benefit_contracts.id", ondelete="CASCADE"))
+    benefit_ref: Mapped[str] = mapped_column(String(50), nullable=False)
+    benefit_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    benefit_tier: Mapped[str] = mapped_column(String(50), default="BASE")
+    limit_basis: Mapped[Optional[str]] = mapped_column(String(50))
+    benefit_value: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    benefit_cap: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    inner_cap_percent: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
+    fixed_share_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    percentage_share: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 2))
+    eligibility_delay_days: Mapped[Optional[int]] = mapped_column(Integer)
+    is_core_benefit: Mapped[bool] = mapped_column(Boolean, default=True)
+    eligibility_rules: Mapped[Optional[str]] = mapped_column(Text)
+    non_covered_notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     
     # Relationships
-    policy: Mapped["Policy"] = relationship("Policy", back_populates="coverages")
+    policy: Mapped["Policy"] = relationship("Policy", back_populates="plan_benefits")
 
 
 class Member(Base):
     """Member/insured person details."""
-    __tablename__ = "members"
+    __tablename__ = "participants"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    policy_id: Mapped[int] = mapped_column(Integer, ForeignKey("policies.id", ondelete="CASCADE"))
-    member_id: Mapped[Optional[str]] = mapped_column(String(50), unique=True)
-    employee_code: Mapped[Optional[str]] = mapped_column(String(50))
-    member_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    relationship: Mapped[str] = mapped_column(String(50), default="SELF")
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("benefit_contracts.id", ondelete="CASCADE"))
+    participant_ref: Mapped[Optional[str]] = mapped_column(String(50), unique=True)
+    sponsor_person_ref: Mapped[Optional[str]] = mapped_column(String(50))
+    participant_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    enrolment_role: Mapped[str] = mapped_column(String(50), default="SELF")
     gender: Mapped[Optional[str]] = mapped_column(String(10))
-    date_of_birth: Mapped[Optional[date]] = mapped_column(Date)
+    birth_date: Mapped[Optional[date]] = mapped_column(Date)
     age: Mapped[Optional[int]] = mapped_column(Integer)
-    sum_insured: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    premium_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    package_name: Mapped[Optional[str]] = mapped_column(String(100))
-    enrollment_date: Mapped[Optional[date]] = mapped_column(Date)
-    risk_inception_date: Mapped[Optional[date]] = mapped_column(Date)
-    risk_expiry_date: Mapped[Optional[date]] = mapped_column(Date)
+    benefit_ceiling: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    contribution_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    plan_variant: Mapped[Optional[str]] = mapped_column(String(100))
+    enrolled_on: Mapped[Optional[date]] = mapped_column(Date)
+    eligibility_from: Mapped[Optional[date]] = mapped_column(Date)
+    eligibility_until: Mapped[Optional[date]] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(50), default="ACTIVE")
     city: Mapped[Optional[str]] = mapped_column(String(100))
     state: Mapped[Optional[str]] = mapped_column(String(100))
-    pincode: Mapped[Optional[str]] = mapped_column(String(10))
+    postal_code: Mapped[Optional[str]] = mapped_column(String(10))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     
     # Relationships
-    policy: Mapped["Policy"] = relationship("Policy", back_populates="members")
-    claims: Mapped[List["Claim"]] = relationship("Claim", back_populates="member", cascade="all, delete-orphan")
+    policy: Mapped["Policy"] = relationship("Policy", back_populates="participants")
+    service_cases: Mapped[List["Claim"]] = relationship("Claim", back_populates="member", cascade="all, delete-orphan")
 
 
 class Claim(Base):
     """Insurance claim records."""
-    __tablename__ = "claims"
+    __tablename__ = "service_cases"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    claim_number: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
-    policy_id: Mapped[int] = mapped_column(Integer, ForeignKey("policies.id", ondelete="CASCADE"))
-    member_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("members.id", ondelete="CASCADE"))
-    claim_type: Mapped[str] = mapped_column(String(50), default="CASHLESS")
-    claim_category: Mapped[str] = mapped_column(String(50), default="IPD")
-    diagnosis_code: Mapped[Optional[str]] = mapped_column(String(20))
-    diagnosis_description: Mapped[Optional[str]] = mapped_column(String(500))
-    treatment_type: Mapped[Optional[str]] = mapped_column(String(255))
-    hospital_name: Mapped[Optional[str]] = mapped_column(String(255))
-    hospital_city: Mapped[Optional[str]] = mapped_column(String(100))
-    hospital_state: Mapped[Optional[str]] = mapped_column(String(100))
-    hospital_rohini_code: Mapped[Optional[str]] = mapped_column(String(50))
-    admission_date: Mapped[Optional[date]] = mapped_column(Date)
-    discharge_date: Mapped[Optional[date]] = mapped_column(Date)
-    claim_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    approved_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    deductible_applied: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    copay_applied: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    net_payable: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
-    claim_status: Mapped[str] = mapped_column(String(50), default="REGISTERED")
-    registration_date: Mapped[Optional[date]] = mapped_column(Date)
-    settlement_date: Mapped[Optional[date]] = mapped_column(Date)
-    rejection_reason: Mapped[Optional[str]] = mapped_column(Text)
-    adjuster_notes: Mapped[Optional[str]] = mapped_column(Text)
+    case_ref: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("benefit_contracts.id", ondelete="CASCADE"))
+    participant_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("participants.id", ondelete="CASCADE"))
+    funding_mode: Mapped[str] = mapped_column(String(50), default="DIRECT_BILLING")
+    care_setting: Mapped[str] = mapped_column(String(50), default="FACILITY_STAY")
+    condition_code: Mapped[Optional[str]] = mapped_column(String(20))
+    condition_label: Mapped[Optional[str]] = mapped_column(String(500))
+    service_category: Mapped[Optional[str]] = mapped_column(String(255))
+    provider_label: Mapped[Optional[str]] = mapped_column(String(255))
+    provider_city: Mapped[Optional[str]] = mapped_column(String(100))
+    provider_region: Mapped[Optional[str]] = mapped_column(String(100))
+    provider_registry_ref: Mapped[Optional[str]] = mapped_column(String(50))
+    service_started_on: Mapped[Optional[date]] = mapped_column(Date)
+    service_ended_on: Mapped[Optional[date]] = mapped_column(Date)
+    requested_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    eligible_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    fixed_share_applied: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    percentage_share_applied: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    payable_amount: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
+    case_status: Mapped[str] = mapped_column(String(50), default="OPENED")
+    submitted_on: Mapped[Optional[date]] = mapped_column(Date)
+    resolved_on: Mapped[Optional[date]] = mapped_column(Date)
+    decision_reason: Mapped[Optional[str]] = mapped_column(Text)
+    reviewer_notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
     
     # Relationships
-    policy: Mapped["Policy"] = relationship("Policy", back_populates="claims")
-    member: Mapped[Optional["Member"]] = relationship("Member", back_populates="claims")
+    policy: Mapped["Policy"] = relationship("Policy", back_populates="service_cases")
+    member: Mapped[Optional["Member"]] = relationship("Member", back_populates="service_cases")
 
 
 class ICDCode(Base):
@@ -169,21 +169,21 @@ class ICDCode(Base):
     typical_treatment_cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(15, 2))
 
 
-class Hospital(Base):
-    """Hospital network details."""
-    __tablename__ = "hospitals"
+class CareProvider(Base):
+    """CareProvider network details."""
+    __tablename__ = "care_providers"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    rohini_code: Mapped[Optional[str]] = mapped_column(String(50), unique=True)
-    hospital_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    hospital_type: Mapped[str] = mapped_column(String(50), default="NETWORK")
+    registry_ref: Mapped[Optional[str]] = mapped_column(String(50), unique=True)
+    provider_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_kind: Mapped[str] = mapped_column(String(50), default="PARTICIPATING")
     address: Mapped[Optional[str]] = mapped_column(Text)
     city: Mapped[Optional[str]] = mapped_column(String(100))
     state: Mapped[Optional[str]] = mapped_column(String(100))
-    pincode: Mapped[Optional[str]] = mapped_column(String(10))
+    postal_code: Mapped[Optional[str]] = mapped_column(String(10))
     tier: Mapped[Optional[str]] = mapped_column(String(20))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    is_network_hospital: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_participating: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -196,10 +196,10 @@ class EvalQuestion(Base):
     ground_truth_answer: Mapped[str] = mapped_column(Text, nullable=False)
     query_type: Mapped[str] = mapped_column(String(50), default="DOCUMENT_QA")
     difficulty: Mapped[str] = mapped_column(String(20), default="MEDIUM")
-    relevant_policy_ids: Mapped[Optional[List[int]]] = mapped_column(ARRAY(Integer))
+    relevant_contract_ids: Mapped[Optional[List[int]]] = mapped_column(ARRAY(Integer))
     relevant_chunk_ids: Mapped[Optional[List[int]]] = mapped_column(ARRAY(Integer))
     expected_sql: Mapped[Optional[str]] = mapped_column(Text)
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON)
+    question_metadata: Mapped[Optional[dict]] = mapped_column("metadata", JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -211,9 +211,11 @@ class EvalResult(Base):
     run_id: Mapped[str] = mapped_column(String(100), nullable=False)
     question_id: Mapped[int] = mapped_column(Integer, ForeignKey("eval_questions.id"))
     generated_answer: Mapped[Optional[str]] = mapped_column(Text)
+    actual_answer: Mapped[Optional[str]] = mapped_column(Text)
     retrieved_chunk_ids: Mapped[Optional[List[int]]] = mapped_column(ARRAY(Integer))
     faithfulness_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
     relevance_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
+    similarity_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
     context_precision: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
     is_correct: Mapped[Optional[bool]] = mapped_column(Boolean)
     latency_ms: Mapped[Optional[int]] = mapped_column(Integer)

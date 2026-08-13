@@ -31,9 +31,9 @@ This document provides a comprehensive technical explanation of PolicyMind, cove
 
 Insurance companies struggle with:
 
-1. **Policy Complexity**: Insurance documents are dense, legal documents with hundreds of pages covering coverage limits, exclusions, deductibles, waiting periods, and conditions.
+1. **Policy Complexity**: Insurance documents are dense, legal documents with hundreds of pages covering coverage limits, exclusions, fixed shares, waiting periods, and conditions.
 
-2. **Customer Support Burden**: Call centers spend 60-70% of time answering repetitive questions like "Is X covered?" or "What's my maternity limit?"
+2. **Customer Support Burden**: Call centers spend 60-70% of time answering repetitive questions like "Is X covered?" or "What's my family-support limit?"
 
 3. **Claims Data Silos**: Claims data (statistics, trends, amounts) lives in databases while policy terms live in documents — answering "Why was my claim rejected for condition X?" requires querying both.
 
@@ -43,21 +43,21 @@ Insurance companies struggle with:
 
 PolicyMind is an **Agentic RAG (Retrieval-Augmented Generation) system** that:
 
-- **Understands natural language questions** about insurance policies
+- **Understands natural language questions** about insurance benefit_contracts
 - **Automatically routes queries** to the right processing pipeline
 - **Combines document search with database queries** for comprehensive answers
 - **Provides citations** to source documents for transparency
 - **Uses state-of-the-art LLMs** for accurate, contextual responses
 
 ```
-User: "What's the maternity coverage and how many maternity claims were rejected this year?"
+User: "What's the family-support coverage and how many family-support service_cases were rejected this year?"
 
 PolicyMind:
-→ Detects this needs BOTH policy documents AND claims data (hybrid query)
-→ Searches policy chunks for "maternity coverage" → Finds limit: ₹50,000
-→ Queries claims database → 12 maternity claims rejected
-→ Synthesizes: "Maternity coverage is ₹50,000 [Source 1]. This year, 12 
-   maternity claims were rejected, primarily due to the 9-month waiting 
+→ Detects this needs BOTH policy documents AND service_cases data (hybrid query)
+→ Searches policy chunks for "family-support coverage" → Finds limit: CU 50,000
+→ Queries service_cases database → 12 family-support service_cases rejected
+→ Synthesizes: "Family Support coverage is CU 50,000 [Source 1]. This year, 12
+   family-support service cases were declined, primarily due to the 9-month waiting
    period exclusion."
 ```
 
@@ -70,15 +70,15 @@ PolicyMind:
 | User Type | Use Case | Example Queries |
 |-----------|----------|-----------------|
 | **Customer Support Agents** | Answer policyholder questions | "Is dialysis covered?", "What's the room rent limit?" |
-| **Claims Adjusters** | Validate coverage during claims processing | "Does this policy cover pre-existing diabetes?" |
-| **Underwriters** | Analyze claims patterns | "What's our rejection rate for cardiac claims?" |
+| **Claims Adjusters** | Validate coverage during service_cases processing | "Does this policy cover pre-existing diabetes?" |
+| **Underwriters** | Analyze service_cases patterns | "What's our rejection rate for cardiac service_cases?" |
 | **Policyholders** (self-service) | Understand their coverage | "What documents do I need to file a claim?" |
 
 ### Secondary Users
 
 | User Type | Use Case |
 |-----------|----------|
-| **Data Analysts** | Generate claims reports via natural language |
+| **Data Analysts** | Generate service_cases reports via natural language |
 | **Compliance Officers** | Verify policy terms are being applied correctly |
 | **Product Managers** | Understand claim patterns to design better products |
 
@@ -148,7 +148,7 @@ This is the "agentic" pattern — **LLMs that take actions based on reasoning**.
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              API LAYER (FastAPI)                             │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │   /health   │  │  /api/ask   │  │ /api/ingest │  │  /api/eval  │         │
+│  │   /health   │  │ /insights   │  │ /knowledge  │  │  /api/eval  │         │
 │  │  (Health)   │  │  (Query)    │  │ (Ingestion) │  │(Evaluation) │         │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘         │
 └─────────────────────────────────────┬───────────────────────────────────────┘
@@ -188,7 +188,7 @@ This is the "agentic" pattern — **LLMs that take actions based on reasoning**.
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                     PostgreSQL + pgvector                            │    │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │    │
-│  │  │ policies │ │ chunks   │ │ claims   │ │ members  │ │hospitals │  │    │
+│  │  │ benefit_contracts │ │ chunks   │ │ service_cases   │ │ participants  │ │care_providers │  │    │
 │  │  │          │ │(+vectors)│ │          │ │          │ │          │  │    │
 │  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
@@ -230,7 +230,7 @@ This is the "agentic" pattern — **LLMs that take actions based on reasoning**.
 ```python
 # Classification Result
 {
-    "query_type": "document_qa" | "claims_sql" | "hybrid",
+    "query_type": "document_qa" | "records_sql" | "hybrid",
     "confidence": 0.92,
     "reasoning": "Query contains policy coverage keywords"
 }
@@ -241,8 +241,8 @@ This is the "agentic" pattern — **LLMs that take actions based on reasoning**.
 | Type | Description | Example |
 |------|-------------|---------|
 | `document_qa` | Questions about policy terms | "Is dialysis covered?" |
-| `claims_sql` | Questions requiring database queries | "How many claims were rejected?" |
-| `hybrid` | Need both document + data | "Why are maternity claims rejected and what's the waiting period?" |
+| `records_sql` | Questions requiring database queries | "How many service_cases were rejected?" |
+| `hybrid` | Need both document + data | "Why are family-support service_cases rejected and what's the waiting period?" |
 
 ---
 
@@ -261,9 +261,9 @@ START → classify → [rag | sql | hybrid] → END
 ```python
 class GraphState(TypedDict):
     query: str                              # User's question
-    policy_id: Optional[int]                # Filter by policy
+    contract_id: Optional[int]                # Filter by policy
     classification: ClassificationResult    # Routing decision
-    query_type: QueryType                   # document_qa/claims_sql/hybrid
+    query_type: QueryType                   # document_qa/records_sql/hybrid
     result: QueryResult                     # Final answer
     error: Optional[str]                    # Error if any
     current_node: str                       # Tracking
@@ -300,7 +300,7 @@ Query → Embed Query → Hybrid Search → Build Context → LLM Generate → A
 
 **Location:** `app/application/agents/sql_agent.py`
 
-**Purpose:** Converts natural language to SQL and queries claims data.
+**Purpose:** Converts natural language to SQL and queries service_cases data.
 
 **Workflow:**
 ```
@@ -315,7 +315,7 @@ Query → Generate SQL → Validate Safety → Execute → Explain Results
 
 **Schema Knowledge:**
 ```sql
-Tables: claims, members, policies, icd_codes, hospitals
+Tables: service_cases, participants, benefit_contracts, icd_codes, care_providers
 ```
 
 ---
@@ -333,14 +333,14 @@ Query → Extract Sub-Queries → Execute RAG → Execute SQL → Synthesize Ans
 
 **Example:**
 ```
-User: "What's our maternity claim rejection rate and what does the policy say about maternity coverage?"
+User: "What's our family-support claim rejection rate and what does the policy say about family-support coverage?"
 
 Sub-queries extracted:
-- doc_query: "maternity coverage benefits"
-- sql_query: "maternity claim rejection statistics"
+- doc_query: "family-support coverage benefits"
+- sql_query: "family-support claim rejection statistics"
 
-→ RAG: "Maternity coverage is ₹50,000 with 9-month waiting period"
-→ SQL: "12 of 45 maternity claims (26.7%) were rejected"
+→ RAG: "Family Support coverage is CU 50,000 with 9-month waiting period"
+→ SQL: "12 of 45 family-support service_cases (26.7%) were rejected"
 → Synthesized: Complete answer combining both
 ```
 
@@ -469,10 +469,10 @@ Similar chunks found:
 **Vector search** finds documents by semantic similarity, not keyword matching.
 
 ```
-Traditional Search: "maternity benefits"
-→ Only finds documents containing "maternity" AND "benefits"
+Traditional Search: "family-support benefits"
+→ Only finds documents containing "family-support" AND "benefits"
 
-Vector Search: "maternity benefits"
+Vector Search: "family-support benefits"
 → Finds: "pregnancy coverage", "childbirth expenses", "newborn care"
 → Even if they don't contain the exact words!
 ```
@@ -481,7 +481,7 @@ Vector Search: "maternity benefits"
 ```sql
 -- Find 5 most similar chunks using cosine distance
 SELECT content, 1 - (embedding <=> query_embedding) as similarity
-FROM policy_chunks
+FROM contract_passages
 ORDER BY embedding <=> query_embedding
 LIMIT 5;
 ```
@@ -526,14 +526,14 @@ Where:
 │  │ RAG Agent  │ → Search policy documents                        │
 │  └────────────┘                                                  │
 │                                                                  │
-│  "How many claims were rejected in 2024?"                        │
+│  "How many service_cases were rejected in 2024?"                        │
 │       │                                                          │
-│       ▼ Keywords: "how many", "claims" → claims_sql              │
+│       ▼ Keywords: "how many", "service_cases" → records_sql              │
 │  ┌────────────┐                                                  │
 │  │ SQL Agent  │ → Query database                                 │
 │  └────────────┘                                                  │
 │                                                                  │
-│  "What's the coverage limit and how many claims used it?"        │
+│  "What's the coverage limit and how many service_cases used it?"        │
 │       │                                                          │
 │       ▼ Mixed keywords → hybrid                                  │
 │  ┌──────────────┐                                                │
@@ -553,12 +553,12 @@ Where:
 User: "What's the total claim amount for cardiac conditions in Mumbai?"
 
 LLM generates:
-SELECT SUM(claim_amount) as total
-FROM claims
-WHERE diagnosis_code LIKE 'I%'   -- ICD codes for cardiac
-  AND hospital_city = 'Mumbai';
+SELECT SUM(requested_amount) as total
+FROM service_cases
+WHERE condition_code LIKE 'I%'   -- ICD codes for cardiac
+  AND provider_city = 'Mumbai';
 
-Result: ₹45,23,000
+Result: CU 45,23,000
 ```
 
 **PolicyMind's approach:**
@@ -589,15 +589,15 @@ PolicyMind includes evaluation metrics for measuring system quality:
 
 ## 7. End-to-End Request Flow
 
-### Example: "What is the maternity coverage limit?"
+### Example: "What is the family-support coverage limit?"
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ STEP 1: API REQUEST                                                          │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   POST /api/v1/ask                                                           │
-│   {"query": "What is the maternity coverage limit?"}                         │
+│   POST /api/v2/insights/query                                                           │
+│   {"prompt": "What is the family-support coverage limit?"}                         │
 │                                                                              │
 │   → FastAPI validates request with Pydantic schema                           │
 │   → Rate limiter checks (100 req/min)                                        │
@@ -612,8 +612,8 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │                                                                              │
 │   Initial State:                                                             │
 │   {                                                                          │
-│       "query": "What is the maternity coverage limit?",                      │
-│       "policy_id": null,                                                     │
+│       "prompt": "What is the family-support coverage limit?",                      │
+│       "contract_id": null,                                                     │
 │       "classification": null,                                                │
 │       "result": null                                                         │
 │   }                                                                          │
@@ -627,7 +627,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │ STEP 3: QUERY CLASSIFICATION                                                 │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
-│   QueryClassifier.classify("What is the maternity coverage limit?")          │
+│   QueryClassifier.classify("What is the family-support coverage limit?")          │
 │                                                                              │
 │   Keyword Analysis:                                                          │
 │   - doc_keywords found: "coverage", "limit" → doc_score = 2                  │
@@ -658,7 +658,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │                                                                              │
 │   5a. EMBED QUERY                                                            │
 │   ────────────────                                                           │
-│   EmbeddingService.embed_query("What is the maternity coverage limit?")      │
+│   EmbeddingService.embed_query("What is the family-support coverage limit?")      │
 │   → OpenAI API: text-embedding-3-small                                       │
 │   → Result: [0.12, 0.45, -0.33, ..., 0.78]  (1536 dimensions)                │
 │                                                                              │
@@ -668,20 +668,20 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │                                                                              │
 │   Vector Search:                                                             │
 │   SELECT content, 1-(embedding <=> query_vector) as similarity               │
-│   FROM policy_chunks                                                         │
+│   FROM contract_passages                                                         │
 │   ORDER BY embedding <=> query_vector LIMIT 10;                              │
 │                                                                              │
 │   Results:                                                                   │
-│   - "MATERNITY BENEFITS: Coverage up to ₹50,000..." (sim: 0.92)              │
+│   - "MATERNITY BENEFITS: Coverage up to CU 50,000..." (sim: 0.92)              │
 │   - "Pregnancy coverage includes..." (sim: 0.87)                             │
-│   - "Waiting period for maternity: 9 months..." (sim: 0.84)                  │
+│   - "Waiting period for family-support: 9 months..." (sim: 0.84)                  │
 │                                                                              │
 │   BM25 Search:                                                               │
-│   Tokenize corpus, compute BM25 scores for "maternity coverage limit"        │
+│   Tokenize corpus, compute BM25 scores for "family-support coverage limit"        │
 │                                                                              │
 │   Results:                                                                   │
-│   - "maternity coverage limit is..." (score: 8.5)                            │
-│   - "maternity benefits coverage..." (score: 7.2)                            │
+│   - "family-support coverage limit is..." (score: 8.5)                            │
+│   - "family-support benefits coverage..." (score: 7.2)                            │
 │                                                                              │
 │   RRF Fusion:                                                                │
 │   Combined score = 0.7 × (1/(60+vector_rank)) + 0.3 × (1/(60+bm25_rank))     │
@@ -690,11 +690,11 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │                                                                              │
 │   5c. BUILD CONTEXT                                                          │
 │   ─────────────────                                                          │
-│   [Source 1 - Section: Maternity Benefits (Page 2)]                          │
+│   [Source 1 - Section: Family Support Benefits (Page 2)]                          │
 │   MATERNITY BENEFITS                                                         │
-│   Coverage Amount: Up to ₹50,000                                             │
-│   Normal Delivery: Up to ₹25,000                                             │
-│   Cesarean Section: Up to ₹50,000                                            │
+│   Coverage Amount: Up to CU 50,000                                             │
+│   Normal Delivery: Up to CU 25,000                                             │
+│   Cesarean Section: Up to CU 50,000                                            │
 │   ...                                                                        │
 │                                                                              │
 │   5d. GENERATE ANSWER                                                        │
@@ -702,17 +702,17 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │   OpenAI Chat Completion (gpt-4-turbo-preview):                              │
 │                                                                              │
 │   System: "You are an insurance policy expert..."                            │
-│   User: "Context: [chunks]\n\nQuestion: What is maternity coverage limit?"   │
+│   User: "Context: [chunks]\n\nQuestion: What is family-support coverage limit?"   │
 │                                                                              │
-│   Response: "The maternity coverage limit is up to ₹50,000 per pregnancy.    │
-│   Normal delivery is covered up to ₹25,000 and Cesarean Section up to        │
-│   ₹50,000. [Source 1]"                                                       │
+│   Response: "The family-support coverage limit is up to CU 50,000 per pregnancy.    │
+│   Normal delivery is covered up to CU 25,000 and Cesarean Section up to        │
+│   CU 50,000. [Source 1]"                                                       │
 │                                                                              │
 │   5e. BUILD CITATIONS                                                        │
 │   ───────────────────                                                        │
 │   citations = [                                                              │
-│       Citation(source_id=1, policy_name="Group Health Shield",               │
-│                section="Maternity Benefits", page=2,                         │
+│       Citation(source_id=1, contract_title="Group Health Shield",               │
+│                section="Family Support Benefits", page=2,                         │
 │                relevance_score=0.92)                                         │
 │   ]                                                                          │
 │                                                                              │
@@ -724,10 +724,10 @@ PolicyMind includes evaluation metrics for measuring system quality:
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │   {                                                                          │
-│       "query": "What is the maternity coverage limit?",                      │
+│       "prompt": "What is the family-support coverage limit?",                      │
 │       "query_type": "document_qa",                                           │
-│       "answer": "The maternity coverage limit is up to ₹50,000...",          │
-│       "citations": [{"source_id": 1, "section": "Maternity Benefits", ...}], │
+│       "answer": "The family-support coverage limit is up to CU 50,000...",          │
+│       "citations": [{"source_id": 1, "section": "Family Support Benefits", ...}], │
 │       "latency_ms": 450,                                                     │
 │       "model_used": "gpt-4-turbo-preview"                                    │
 │   }                                                                          │
@@ -761,8 +761,8 @@ PolicyMind includes evaluation metrics for measuring system quality:
 └────────┬────────┘
          │
          │  chunks = [
-         │    {"content": "...", "chunk_index": 0, "char_start": 0, "char_end": 1000},
-         │    {"content": "...", "chunk_index": 1, "char_start": 800, "char_end": 1800},
+         │    {"content": "...", "passage_order": 0, "source_offset_start": 0, "source_offset_end": 1000},
+         │    {"content": "...", "passage_order": 1, "source_offset_start": 800, "source_offset_end": 1800},
          │    ...
          │  ]
          │
@@ -783,9 +783,9 @@ PolicyMind includes evaluation metrics for measuring system quality:
 └────────┬────────┘
          │
          ▼
-   policy_chunks table
+   contract_passages table
    ┌─────────────────────────────────────────────────────────┐
-   │ id │ policy_id │ content │ embedding │ section_type │...│
+   │ id │ contract_id │ content │ embedding │ topic_category │...│
    ├────┼───────────┼─────────┼───────────┼──────────────┼───┤
    │ 1  │ 1         │ "..."   │ [0.12,...]│ COVERAGE     │...│
    │ 2  │ 1         │ "..."   │ [0.08,...]│ EXCLUSION    │...│
@@ -809,7 +809,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
    │  - Rate limiting                                                 │
    └─────────────────────────────────────────────────────────────────┘
          │
-         │  AskRequest(query="...", policy_id=None)
+         │  InsightQueryRequest(prompt="...", scope_key=None)
          │
          ▼
    ┌─────────────────────────────────────────────────────────────────┐
@@ -817,7 +817,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
    │                                                                  │
    │  GraphState {                                                    │
    │    query: "What is covered?",                                    │
-   │    policy_id: null,                                              │
+   │    contract_id: null,                                              │
    │    classification: null → ClassificationResult                   │
    │    query_type: null → QueryType.DOCUMENT_QA                      │
    │    result: null → QueryResult                                    │
@@ -845,7 +845,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
    ┌─────────────────────────────────────────────────────────────────┐
    │                    API Response                                  │
    │                                                                  │
-   │  AskResponse (JSON) → HTTP 200                                   │
+   │  InsightQueryResponse (JSON) → HTTP 200                                   │
    └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -902,7 +902,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │   │  """                                                               │     │
 │   │  [Source 1 - Section: Cancer Treatment (Page 5)]                   │     │
 │   │  Cancer treatment including chemotherapy is covered up to          │     │
-│   │  ₹10,00,000 per policy year. Pre-authorization required.           │     │
+│   │  CU 10,00,000 per policy year. Pre-authorization required.           │     │
 │   │                                                                    │     │
 │   │  ---                                                               │     │
 │   │                                                                    │     │
@@ -935,7 +935,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
 │   │                                                                    │     │
 │   │  LLM Response:                                                     │     │
 │   │  "Yes, chemotherapy is covered under your policy. Cancer          │     │
-│   │   treatment including chemotherapy is covered up to ₹10,00,000    │     │
+│   │   treatment including chemotherapy is covered up to CU 10,00,000    │     │
 │   │   per policy year. Pre-authorization is required for treatment.   │     │
 │   │   [Source 1] [Source 2]"                                          │     │
 │   │                                                                    │     │
@@ -952,7 +952,7 @@ PolicyMind includes evaluation metrics for measuring system quality:
 | **RAG** | Always up-to-date, auditable citations | Slightly slower, depends on retrieval quality |
 
 PolicyMind uses RAG because:
-1. **Policy documents change** — new policies, endorsements, updates
+1. **Policy documents change** — new benefit_contracts, endorsements, updates
 2. **Auditability** — citations show where information came from
 3. **No hallucination** — LLM can only use provided context
 4. **Cost-effective** — no fine-tuning compute costs
@@ -975,7 +975,7 @@ PolicyMind uses RAG because:
 │  Input: "Tell me about cardiac claim patterns and policy coverage"         │
 │                                                                            │
 │  LLM Prompt:                                                               │
-│  "Classify this query: document_qa, claims_sql, or hybrid?"                │
+│  "Classify this query: document_qa, records_sql, or hybrid?"                │
 │                                                                            │
 │  Output: { "query_type": "hybrid", "confidence": 0.95 }                    │
 │                                                                            │
@@ -1007,13 +1007,13 @@ PolicyMind uses RAG because:
 │  Input: Natural language question + Database schema                        │
 │                                                                            │
 │  System Prompt: "Generate PostgreSQL SELECT queries.                       │
-│                  Tables: claims, members, policies..."                     │
+│                  Tables: service_cases, participants, benefit_contracts..."                     │
 │                                                                            │
-│  User Prompt: "Generate SQL for: How many claims were rejected in 2024?"   │
+│  User Prompt: "Generate SQL for: How many service_cases were rejected in 2024?"   │
 │                                                                            │
 │  Output: {                                                                 │
-│    "sql": "SELECT COUNT(*) FROM claims WHERE claim_status='REJECTED'...",  │
-│    "explanation": "Counts rejected claims from 2024"                       │
+│    "sql": "SELECT COUNT(*) FROM service_cases WHERE case_status='DECLINED'...",  │
+│    "explanation": "Counts rejected service_cases from 2024"                       │
 │  }                                                                         │
 │                                                                            │
 │  Model: gpt-4-turbo-preview, Temperature: 0.0 (deterministic for SQL)      │
@@ -1028,7 +1028,7 @@ PolicyMind uses RAG because:
 │                                                                            │
 │  System Prompt: "Explain query results clearly. Be precise with numbers."  │
 │                                                                            │
-│  Output: "In 2024, 45 claims were rejected. The primary reasons were..."   │
+│  Output: "In 2024, 45 service_cases were rejected. The primary reasons were..."   │
 │                                                                            │
 │  Model: gpt-4-turbo-preview, Temperature: 0.2                              │
 │                                                                            │
@@ -1043,7 +1043,7 @@ PolicyMind uses RAG because:
 │  System Prompt: "Synthesize information from two sources into              │
 │                  a coherent answer."                                       │
 │                                                                            │
-│  Output: Combined answer connecting policy terms with claims data          │
+│  Output: Combined answer connecting policy terms with service_cases data          │
 │                                                                            │
 │  Model: gpt-4-turbo-preview, Temperature: 0.3                              │
 │                                                                            │
@@ -1163,7 +1163,7 @@ PolicyMind uses RAG because:
 │                                                                              │
 │  PostgreSQL Scaling:                                                         │
 │  - Read replicas for search queries                                          │
-│  - Partition policy_chunks by policy_id                                      │
+│  - Partition contract_passages by contract_id                                      │
 │  - HNSW index for larger datasets (vs IVFFlat)                               │
 │                                                                              │
 │  Caching Layer:                                                              │
@@ -1210,7 +1210,7 @@ PolicyMind uses RAG because:
 
 ### 30-Second Pitch
 
-> "PolicyMind is an AI-powered Q&A system for insurance policies. It uses RAG - Retrieval-Augmented Generation - to answer questions by first searching relevant policy documents, then generating accurate answers with citations. What makes it unique is the agentic architecture: it automatically classifies queries and routes them to either document search, SQL database queries, or both, depending on what the question needs. Built with FastAPI, PostgreSQL with pgvector, LangGraph for orchestration, and GPT-4 for generation."
+> "PolicyMind is an AI-powered Q&A system for insurance benefit_contracts. It uses RAG - Retrieval-Augmented Generation - to answer questions by first searching relevant policy documents, then generating accurate answers with citations. What makes it unique is the agentic architecture: it automatically classifies queries and routes them to either document search, SQL database queries, or both, depending on what the question needs. Built with FastAPI, PostgreSQL with pgvector, LangGraph for orchestration, and GPT-4 for generation."
 
 ### 2-Minute Explanation
 
@@ -1218,7 +1218,7 @@ PolicyMind uses RAG because:
 >
 > The system has three main components:
 >
-> 1. **Query Classification** - When a user asks a question, the system first determines if it's about policy documents (like 'Is dialysis covered?'), claims data (like 'How many claims were rejected?'), or both. This uses a combination of keyword matching and LLM classification.
+> 1. **Query Classification** - When a user asks a question, the system first determines if it's about policy documents (like 'Is dialysis covered?'), service_cases data (like 'How many service_cases were rejected?'), or both. This uses a combination of keyword matching and LLM classification.
 >
 > 2. **Hybrid Search** - For document questions, we use hybrid search combining vector similarity search using pgvector in PostgreSQL with BM25 keyword search. This gets better results than either alone - vectors find semantically similar content while BM25 catches exact keyword matches.
 >
@@ -1230,18 +1230,18 @@ PolicyMind uses RAG because:
 
 ### 5-Minute Deep Dive
 
-> "Let me walk you through what happens when a user asks 'What's the maternity coverage and how many maternity claims were rejected?'
+> "Let me walk you through what happens when a user asks 'What's the family-support coverage and how many family-support service_cases were rejected?'
 >
 > **Step 1: Classification**
-> The query hits our FastAPI endpoint and goes to the Query Classifier. The classifier notices both document keywords ('coverage') and SQL keywords ('how many', 'claims'), so it classifies this as a 'hybrid' query with high confidence.
+> The query hits our FastAPI endpoint and goes to the Query Classifier. The classifier notices both document keywords ('coverage') and SQL keywords ('how many', 'service_cases'), so it classifies this as a 'hybrid' query with high confidence.
 >
 > **Step 2: LangGraph Routing**
 > The LangGraph state machine receives this classification and routes to the Hybrid Agent. The state contains the query, the classification result, and slots for the eventual answer.
 >
 > **Step 3: Sub-Query Extraction**
 > The Hybrid Agent uses GPT-4 to break down the query into two parts:
-> - Document query: 'maternity coverage benefits'
-> - SQL query: 'maternity claim rejection statistics'
+> - Document query: 'family-support coverage benefits'
+> - SQL query: 'family-support claim rejection statistics'
 >
 > **Step 4: Parallel Execution**
 > 
@@ -1256,14 +1256,14 @@ PolicyMind uses RAG because:
 >
 > For the SQL query:
 > 1. Send to GPT-4 with the database schema
-> 2. Generate SELECT query: 'SELECT COUNT(*) FROM claims WHERE...'
+> 2. Generate SELECT query: 'SELECT COUNT(*) FROM service_cases WHERE...'
 > 3. Validate it's SELECT-only (security)
 > 4. Execute against PostgreSQL
 > 5. If error, retry with error context (self-correction)
 > 6. Explain results in natural language
 >
 > **Step 5: Synthesis**
-> The Hybrid Agent takes both answers and asks GPT-4 to synthesize them into a coherent response that connects policy terms with actual claims data.
+> The Hybrid Agent takes both answers and asks GPT-4 to synthesize them into a coherent response that connects policy terms with actual service_cases data.
 >
 > **Step 6: Response**
 > Final response includes the synthesized answer, citations pointing to specific policy sections, the SQL query used, and latency metrics.
@@ -1299,7 +1299,7 @@ PolicyMind uses RAG because:
 
 ### Medium Version (3-4 lines)
 
-> Designed and implemented PolicyMind, an AI-powered Q&A system for insurance policies using Retrieval-Augmented Generation (RAG). Built query classification and routing using LangGraph agents, hybrid search combining pgvector similarity and BM25, and text-to-SQL generation for claims analysis. Stack: Python, FastAPI, PostgreSQL/pgvector, OpenAI GPT-4, Docker. Features include self-correcting SQL generation, citation tracking, and comprehensive evaluation framework.
+> Designed and implemented PolicyMind, an AI-powered Q&A system for insurance benefit_contracts using Retrieval-Augmented Generation (RAG). Built query classification and routing using LangGraph agents, hybrid search combining pgvector similarity and BM25, and text-to-SQL generation for service_cases analysis. Stack: Python, FastAPI, PostgreSQL/pgvector, OpenAI GPT-4, Docker. Features include self-correcting SQL generation, citation tracking, and comprehensive evaluation framework.
 
 ### Detailed Version (bullet points)
 
@@ -1308,7 +1308,7 @@ PolicyMind uses RAG because:
 - Architected and built an AI-powered Q&A system using Retrieval-Augmented Generation (RAG) to answer complex insurance policy questions
 - Implemented hybrid search combining pgvector similarity search with BM25 keyword matching using Reciprocal Rank Fusion, improving retrieval accuracy by 15-20%
 - Designed LangGraph-based agent orchestration with automatic query classification and routing to specialized agents (RAG, SQL, Hybrid)
-- Built self-correcting text-to-SQL generation with schema awareness and retry logic for claims data analysis
+- Built self-correcting text-to-SQL generation with schema awareness and retry logic for service_cases data analysis
 - Created comprehensive evaluation framework with retrieval metrics (Precision@k, MRR, Hit Rate) and answer quality metrics
 - Technologies: Python 3.11, FastAPI, PostgreSQL 16 with pgvector, OpenAI GPT-4 Turbo, LangChain/LangGraph, Docker
 - Implemented production-ready features: rate limiting (slowapi), structured logging (structlog), CORS security, health checks

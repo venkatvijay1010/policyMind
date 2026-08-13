@@ -22,7 +22,7 @@ class HybridAgent:
     - Policy context (what's covered)
     - Data analysis (claim statistics)
     
-    Example: "How many claims were rejected for maternity coverage 
+    Example: "How many service cases were declined for family-support coverage
              and what does the policy say about maternity benefits?"
     """
     
@@ -42,7 +42,7 @@ Query: {query}
 
 Identify:
 1. doc_query: What should we search in policy documents? (coverage, terms, exclusions)
-2. sql_query: What data should we query from claims database? (statistics, counts, trends)
+2. sql_query: What data should we query from service_cases database? (statistics, counts, trends)
 
 Return JSON:
 {{
@@ -98,14 +98,14 @@ Here's information from two sources:
 
 Please synthesize this into a single, coherent answer that:
 1. Directly answers the user's question
-2. Connects policy terms with actual claims data
+2. Connects policy terms with actual service_cases data
 3. Provides actionable insights if applicable
 """
             
             try:
                 synthesized = await self.llm.generate(
                     prompt=prompt,
-                    system_prompt="You are an insurance expert synthesizing policy and claims information.",
+                    system_prompt="You are an insurance expert synthesizing policy and service_cases information.",
                     temperature=0.3
                 )
                 return synthesized
@@ -118,7 +118,7 @@ Please synthesize this into a single, coherent answer that:
     async def answer(
         self,
         query: str,
-        policy_id: Optional[int] = None
+        contract_id: Optional[int] = None
     ) -> QueryResult:
         """
         Execute hybrid RAG + SQL pipeline.
@@ -140,7 +140,7 @@ Please synthesize this into a single, coherent answer that:
             doc_query = sub_queries.get("doc_query", query)
             rag_result = await self.rag_agent.answer(
                 query=doc_query,
-                policy_id=policy_id
+                contract_id=contract_id
             )
             doc_answer = rag_result.answer
             all_citations.extend(rag_result.citations)

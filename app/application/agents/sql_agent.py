@@ -1,5 +1,5 @@
 """
-SQL Agent - handles claims data queries with self-correction.
+SQL Agent - handles service_cases data queries with self-correction.
 """
 from typing import List, Optional, Any
 import structlog
@@ -17,57 +17,57 @@ logger = structlog.get_logger()
 SCHEMA_INFO = """
 Tables:
 
-1. claims (insurance claims)
+1. service_cases (insurance service_cases)
    - id: INTEGER (PK)
-   - claim_number: VARCHAR (unique claim identifier)
-   - policy_id: INTEGER (FK to policies)
-   - member_id: INTEGER (FK to members)
-   - claim_type: VARCHAR ('CASHLESS', 'REIMBURSEMENT')
-   - claim_category: VARCHAR ('IPD', 'OPD', 'DAYCARE')
-   - diagnosis_code: VARCHAR (ICD-10 code)
-   - diagnosis_description: VARCHAR
-   - treatment_type: VARCHAR
-   - hospital_name: VARCHAR
-   - hospital_city: VARCHAR
-   - hospital_state: VARCHAR
-   - admission_date: DATE
-   - discharge_date: DATE
-   - claim_amount: DECIMAL (total claimed amount)
-   - approved_amount: DECIMAL (approved by insurer)
-   - deductible_applied: DECIMAL
-   - copay_applied: DECIMAL
-   - net_payable: DECIMAL
-   - claim_status: VARCHAR ('REGISTERED', 'UNDER_PROCESS', 'APPROVED', 'SETTLED', 'REJECTED')
-   - registration_date: DATE
-   - settlement_date: DATE
-   - rejection_reason: TEXT
+   - case_ref: VARCHAR (unique synthetic case reference)
+   - contract_id: INTEGER (FK to benefit_contracts)
+   - participant_id: INTEGER (FK to participants)
+   - funding_mode: VARCHAR ('DIRECT_BILLING', 'MEMBER_PAID')
+   - care_setting: VARCHAR ('IPD', 'OPD', 'DAYCARE')
+   - condition_code: VARCHAR (ICD-10 code)
+   - condition_label: VARCHAR
+   - service_category: VARCHAR
+   - provider_label: VARCHAR
+   - provider_city: VARCHAR
+   - provider_region: VARCHAR
+   - service_started_on: DATE
+   - service_ended_on: DATE
+   - requested_amount: DECIMAL (amount requested for the service case)
+   - eligible_amount: DECIMAL (amount eligible under the synthetic contract)
+   - fixed_share_applied: DECIMAL
+   - percentage_share_applied: DECIMAL
+   - payable_amount: DECIMAL
+   - case_status: VARCHAR ('OPENED', 'IN_REVIEW', 'ELIGIBLE', 'RESOLVED', 'DECLINED')
+   - submitted_on: DATE
+   - resolved_on: DATE
+   - decision_reason: TEXT
    - created_at: TIMESTAMP
 
-2. members (insured members)
+2. participants (insured participants)
    - id: INTEGER (PK)
-   - member_id: VARCHAR
-   - policy_id: INTEGER (FK)
-   - member_name: VARCHAR
-   - relationship: VARCHAR ('SELF', 'SPOUSE', 'CHILD', 'PARENT')
+   - participant_ref: VARCHAR
+   - contract_id: INTEGER (FK)
+   - participant_label: VARCHAR
+   - enrolment_role: VARCHAR ('SELF', 'SPOUSE', 'CHILD', 'PARENT')
    - gender: VARCHAR
-   - date_of_birth: DATE
+   - birth_date: DATE
    - age: INTEGER
-   - sum_insured: DECIMAL
+   - benefit_ceiling: DECIMAL
    - status: VARCHAR ('ACTIVE', 'INACTIVE')
    - city: VARCHAR
    - state: VARCHAR
 
-3. policies (insurance policies)
+3. benefit_contracts (insurance benefit_contracts)
    - id: INTEGER (PK)
-   - policy_number: VARCHAR
-   - policy_name: VARCHAR
-   - product_type: VARCHAR
-   - insured_name: VARCHAR (company name)
-   - policy_start_date: DATE
-   - policy_end_date: DATE
-   - total_lives: INTEGER
-   - total_sum_insured: DECIMAL
-   - premium_amount: DECIMAL
+   - contract_ref: VARCHAR
+   - contract_title: VARCHAR
+   - plan_category: VARCHAR
+   - sponsor_label: VARCHAR (company name)
+   - effective_from: DATE
+   - effective_until: DATE
+   - participant_count: INTEGER
+   - aggregate_benefit_cap: DECIMAL
+   - contribution_amount: DECIMAL
 
 4. icd_codes (diagnosis codes reference)
    - code: VARCHAR (PK)
@@ -81,7 +81,7 @@ Tables:
 
 class SQLAgent:
     """
-    SQL Agent for claims data queries.
+    SQL Agent for service_cases data queries.
     
     Features:
     - Natural language to SQL conversion
@@ -250,7 +250,7 @@ If no results were found, explain what that means."""
         
         return QueryResult(
             query=query,
-            query_type=QueryType.CLAIMS_SQL,
+            query_type=QueryType.RECORDS_SQL,
             answer=answer,
             citations=[],
             sql_query=sql,

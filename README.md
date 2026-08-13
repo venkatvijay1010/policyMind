@@ -4,6 +4,10 @@
 
 An intelligent question-answering system that combines Retrieval-Augmented Generation (RAG) with LangGraph-based agent orchestration to answer complex insurance policy questions.
 
+> All organizations, participants, providers, identifiers, amounts, locations, contract terms,
+> workflows, and records in this repository are fictional synthetic examples. They are not copied
+> from, compatible with, or representative of any employer or insurer production system.
+
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.1+-purple.svg)
@@ -11,12 +15,12 @@ An intelligent question-answering system that combines Retrieval-Augmented Gener
 
 ## 🎯 Overview
 
-PolicyMind is an AI-powered assistant that helps users understand insurance policies and analyze claims data. It uses:
+PolicyMind is an AI-powered assistant that helps users understand insurance benefit_contracts and analyze service_cases data. It uses:
 
 - **Hybrid Search**: Combines vector similarity (pgvector) with BM25 for optimal retrieval
 - **Query Classification**: Automatically routes queries to the right agent
 - **LangGraph Orchestration**: State machine-based agent coordination
-- **Self-Correcting SQL**: Generates and validates SQL queries for claims analysis
+- **Self-Correcting SQL**: Generates and validates SQL queries for service_cases analysis
 
 ## 🏗️ Architecture
 
@@ -28,7 +32,7 @@ PolicyMind is an AI-powered assistant that helps users understand insurance poli
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Query Classifier                              │
-│              (document_qa / claims_sql / hybrid)                 │
+│              (document_qa / records_sql / hybrid)                 │
 └─────────────────────────────┬───────────────────────────────────┘
                               │
               ┌───────────────┼───────────────┐
@@ -110,32 +114,32 @@ uvicorn app.main:app --reload
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/ask` | POST | Main query endpoint (auto-routes to appropriate agent) |
-| `/api/v1/ask/classify` | POST | Classify query type without execution |
-| `/api/v1/ask/rag` | POST | Force RAG agent (document search) |
-| `/api/v1/ask/sql` | POST | Force SQL agent (claims data) |
+| `/api/v2/insights/query` | POST | Main query endpoint (auto-routes to appropriate agent) |
+| `/api/v2/insights/route-preview` | POST | Classify query type without execution |
+| `/api/v2/insights/document-only` | POST | Force RAG agent (document search) |
+| `/api/v2/insights/records-only` | POST | Force SQL agent (service_cases data) |
 
 ### Example Query
 
 ```bash
-curl -X POST "http://localhost:8000/api/v1/ask" \
+curl -X POST "http://localhost:8000/api/v2/insights/query" \
   -H "Content-Type: application/json" \
-  -d '{"query": "What is the maternity coverage limit?"}'
+  -d '{"prompt": "What is the family-support coverage limit?"}'
 ```
 
 **Response:**
 ```json
 {
-  "query": "What is the maternity coverage limit?",
+  "prompt": "What is the family-support coverage limit?",
   "query_type": "document_qa",
-  "answer": "The maternity coverage limit is up to ₹50,000 per pregnancy. Normal delivery is covered up to ₹25,000 and Cesarean Section up to ₹50,000. [Source 1]",
+  "answer": "The family-support benefit is capped at CU 50,000 per event. [Source 1]",
   "citations": [
     {
       "source_id": 1,
-      "policy_name": "Group Health Shield Premium",
-      "section": "Maternity Benefits",
+      "contract_title": "Northstar Benefits Plus",
+      "section": "Family Support Benefits",
       "page": 2,
-      "chunk_text": "MATERNITY BENEFITS\n\nCoverage Amount: Up to ₹50,000...",
+      "chunk_text": "FAMILY-SUPPORT BENEFITS\n\nBenefit Amount: Up to CU 50,000...",
       "relevance_score": 0.92
     }
   ],
@@ -148,18 +152,18 @@ curl -X POST "http://localhost:8000/api/v1/ask" \
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/ingest` | POST | Ingest document text |
-| `/api/v1/ingest/file` | POST | Upload and ingest file |
-| `/api/v1/ingest/{policy_id}` | DELETE | Delete chunks for policy |
-| `/api/v1/ingest/stats/{policy_id}` | GET | Get ingestion statistics |
+| `/api/v2/knowledge/scopes/{scope_key}/source` | PUT | Index source text or a public URI |
+| `/api/v2/knowledge/scopes/{scope_key}/file` | PUT | Upload and index a text file |
+| `/api/v2/knowledge/scopes/{scope_key}/source` | DELETE | Delete indexed segments |
+| `/api/v2/knowledge/scopes/{scope_key}/index-status` | GET | Get indexing statistics |
 
 ### Evaluation Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/eval/questions` | GET | List evaluation questions |
-| `/api/v1/eval/run` | POST | Run evaluation |
-| `/api/v1/eval/history` | GET | View evaluation history |
+| `/api/v2/eval/questions` | GET | List evaluation questions |
+| `/api/v2/eval/run` | POST | Run evaluation |
+| `/api/v2/eval/history` | GET | View evaluation history |
 
 ### Health Endpoints
 
@@ -240,12 +244,12 @@ PolicyMind includes a built-in evaluation framework:
 
 ```bash
 # Run evaluation on all questions
-curl -X POST "http://localhost:8000/api/v1/eval/run" \
+curl -X POST "http://localhost:8000/api/v2/eval/run" \
   -H "Content-Type: application/json" \
   -d '{}'
 
 # Run evaluation on specific query types
-curl -X POST "http://localhost:8000/api/v1/eval/run" \
+curl -X POST "http://localhost:8000/api/v2/eval/run" \
   -H "Content-Type: application/json" \
   -d '{"query_types": ["document_qa"]}'
 ```
@@ -253,7 +257,7 @@ curl -X POST "http://localhost:8000/api/v1/eval/run" \
 Metrics tracked:
 - **Accuracy**: Percentage of correct answers (>70% similarity)
 - **Latency**: p50, p95, p99 response times
-- **By Query Type**: Breakdown for document_qa, claims_sql, hybrid
+- **By Query Type**: Breakdown for document_qa, records_sql, hybrid
 
 ## 🏆 Key Features
 
@@ -273,8 +277,8 @@ Metrics tracked:
 
 4. **Deterministic Coverage Calculations**
    - Room rent limits by plan type
-   - Copay and deductible calculations
-   - Network/non-network hospital logic
+   - Percentage Share and fixed share calculations
+   - Network/non-participating provider logic
 
 5. **Built-in Evaluation**
    - Pre-defined test questions
@@ -284,18 +288,18 @@ Metrics tracked:
 ## 📝 Example Queries
 
 **Document Q&A:**
-- "What is the maternity coverage limit?"
+- "What is the family-support coverage limit?"
 - "What are the permanent exclusions?"
 - "What is the waiting period for pre-existing diseases?"
 
 **Claims SQL:**
-- "How many claims were rejected in 2024?"
+- "How many service_cases were rejected in 2024?"
 - "What is the average claim amount by hospital?"
 - "Show top 5 cities by total approved amount"
 
 **Hybrid:**
 - "What's our rejection rate for pre-existing conditions and what does the policy say about them?"
-- "How many maternity claims were filed and what are the benefits?"
+- "How many family-support service_cases were filed and what are the benefits?"
 
 ## 🤝 Contributing
 

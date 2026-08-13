@@ -60,7 +60,7 @@ async def detailed_health(
     
     # Database check
     try:
-        result = await db.execute(text("SELECT COUNT(*) FROM policies"))
+        result = await db.execute(text("SELECT COUNT(*) FROM benefit_contracts"))
         policy_count = result.scalar()
         components["database"] = {
             "status": "healthy",
@@ -74,7 +74,7 @@ async def detailed_health(
     
     # Vector store check
     try:
-        result = await db.execute(text("SELECT COUNT(*) FROM policy_chunks"))
+        result = await db.execute(text("SELECT COUNT(*) FROM contract_passages"))
         chunk_count = result.scalar()
         components["vector_store"] = {
             "status": "healthy",

@@ -81,7 +81,7 @@ curl http://localhost:8000/health/live
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Client Request                            │
-│                     POST /api/v1/ask                             │
+│                     POST /api/v2/insights/query                             │
 └─────────────────────────────────┬───────────────────────────────┘
                                   │
                                   ▼
@@ -128,7 +128,7 @@ curl http://localhost:8000/health/live
 | Query Contains | Classification | Agent Used |
 |----------------|----------------|------------|
 | "covered", "exclusion", "limit", "waiting period" | `document_qa` | RAG Agent |
-| "how many", "total", "count", "claims", "statistics" | `claims_sql` | SQL Agent |
+| "how many", "total", "count", "service_cases", "statistics" | `records_sql` | SQL Agent |
 | Both document + data keywords | `hybrid` | Hybrid Agent |
 | Ambiguous | LLM decides | Based on LLM classification |
 
@@ -247,20 +247,20 @@ Starting database seeding...
 1. Seeding ICD codes...
    Seeded 10 ICD codes
 
-2. Seeding hospitals...
-   Seeded 5 hospitals
+2. Seeding care_providers...
+   Seeded 5 care_providers
 
-3. Seeding policies...
-   Seeded 3 policies
+3. Seeding benefit_contracts...
+   Seeded 3 benefit_contracts
 
 4. Seeding policy chunks with embeddings...
    Seeded 45 policy chunks
 
-5. Seeding members...
-   Seeded 45 members
+5. Seeding participants...
+   Seeded 45 participants
 
-6. Seeding claims...
-   Seeded 150 claims
+6. Seeding service_cases...
+   Seeded 150 service_cases
 
 7. Seeding evaluation questions...
    Seeded 20 evaluation questions
@@ -282,11 +282,11 @@ Check that:
 
 | Table | Records | Description |
 |-------|---------|-------------|
-| `policies` | 3 | Sample insurance policies |
-| `policy_chunks` | ~45 | Document chunks with embeddings |
-| `members` | 45 | Insured members (15 per policy) |
-| `claims` | ~150 | Sample claims with various statuses |
-| `hospitals` | 5 | Network and non-network hospitals |
+| `benefit_contracts` | 3 | Sample insurance benefit_contracts |
+| `contract_passages` | ~45 | Document chunks with embeddings |
+| `participants` | 45 | Insured participants (15 per policy) |
+| `service_cases` | ~150 | Sample service_cases with various statuses |
+| `care_providers` | 5 | Network and non-network care_providers |
 | `icd_codes` | 10 | Common diagnosis codes |
 | `eval_questions` | 20 | Ground truth Q&A pairs |
 
@@ -296,7 +296,7 @@ Check that:
 
 ### 5.1 Main Q&A Endpoint
 
-**Endpoint:** `POST /api/v1/ask`
+**Endpoint:** `POST /api/v2/insights/query`
 
 This is the primary feature - ask any insurance-related question.
 
@@ -304,9 +304,9 @@ This is the primary feature - ask any insurance-related question.
 
 ```json
 {
-  "query": "Your question here",
-  "policy_id": 1,           // Optional: scope to specific policy
-  "search_method": "hybrid" // Options: "vector", "bm25", "hybrid"
+  "prompt": "Your question here",
+  "scope_key": 1,
+  "retrieval_strategy": "blended" // Options: "semantic", "lexical", "blended"
 }
 ```
 
@@ -314,16 +314,16 @@ This is the primary feature - ask any insurance-related question.
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask \
+curl -X POST http://localhost:8000/api/v2/insights/query \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What is the maternity coverage limit?",
-    "policy_id": 1
+    "prompt": "What is the family-support coverage limit?",
+    "scope_key": 1
   }'
 ```
 
 **Internal Flow:**
-1. Query received by `/ask` endpoint
+1. Query received by `/insights/query`
 2. LangGraph orchestrator invokes `classify` node
 3. Keywords detected: "coverage", "limit" → `document_qa`
 4. Routes to RAG agent
@@ -340,16 +340,16 @@ curl -X POST http://localhost:8000/api/v1/ask \
 **Expected Response:**
 ```json
 {
-  "query": "What is the maternity coverage limit?",
+  "prompt": "What is the family-support coverage limit?",
   "query_type": "document_qa",
-  "answer": "The maternity coverage limit is **₹50,000 per pregnancy**. [Source 1]\n\nKey details:\n- Normal Delivery: ₹25,000\n- Cesarean Section: ₹50,000\n- Waiting Period: 36 months from policy inception\n\n**Sources:**\n[1] Policy-1, Maternity Benefits (Page 2)",
+  "answer": "The family-support coverage limit is **CU 50,000 per pregnancy**. [Source 1]\n\nKey details:\n- Normal Delivery: CU 25,000\n- Cesarean Section: CU 50,000\n- Waiting Period: 36 months from policy inception\n\n**Sources:**\n[1] Policy-1, Family Support Benefits (Page 2)",
   "citations": [
     {
       "source_id": 1,
-      "policy_name": "Policy-1",
-      "section": "Maternity Benefits",
+      "contract_title": "Policy-1",
+      "section": "Family Support Benefits",
       "page": 2,
-      "chunk_text": "MATERNITY BENEFITS\n\nCoverage Amount: Up to ₹50,000 per pregnancy\n\nWaiting Period: 36 months...",
+      "chunk_text": "MATERNITY BENEFITS\n\nCoverage Amount: Up to CU 50,000 per pregnancy\n\nWaiting Period: 36 months...",
       "relevance_score": 0.92
     }
   ],
@@ -364,15 +364,15 @@ curl -X POST http://localhost:8000/api/v1/ask \
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask \
+curl -X POST http://localhost:8000/api/v2/insights/query \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "How many claims were rejected and what was the total amount?"
+    "prompt": "How many service_cases were rejected and what was the total amount?"
   }'
 ```
 
 **Internal Flow:**
-1. Query classified as `claims_sql` (keywords: "how many", "claims")
+1. Query classified as `records_sql` (keywords: "how many", "service_cases")
 2. Routes to SQL agent
 3. SQL agent:
    - Validates query is safe (no injection patterns)
@@ -385,11 +385,11 @@ curl -X POST http://localhost:8000/api/v1/ask \
 **Expected Response:**
 ```json
 {
-  "query": "How many claims were rejected and what was the total amount?",
-  "query_type": "claims_sql",
-  "answer": "Based on the claims data:\n\n• **Total Rejected Claims:** 15\n• **Total Rejected Amount:** ₹12,45,000\n\nThe most common rejection reasons were:\n1. Pre-existing condition - waiting period not completed (6 claims)\n2. Non-disclosure of medical history (4 claims)\n3. Treatment not covered under policy (3 claims)",
+  "prompt": "How many service_cases were rejected and what was the total amount?",
+  "query_type": "records_sql",
+  "answer": "Based on the service_cases data:\n\n• **Total Rejected Claims:** 15\n• **Total Rejected Amount:** CU 12,45,000\n\nThe most common rejection reasons were:\n1. Pre-existing condition - waiting period not completed (6 service_cases)\n2. Non-disclosure of medical history (4 service_cases)\n3. Treatment not covered under policy (3 service_cases)",
   "citations": [],
-  "sql_query": "SELECT COUNT(*) as rejected_count, SUM(claim_amount) as total_amount FROM claims WHERE claim_status = 'REJECTED'",
+  "sql_query": "SELECT COUNT(*) as rejected_count, SUM(requested_amount) as total_amount FROM service_cases WHERE case_status = 'DECLINED'",
   "sql_result": [
     {
       "rejected_count": 15,
@@ -405,10 +405,10 @@ curl -X POST http://localhost:8000/api/v1/ask \
 
 **Example Request:**
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask \
+curl -X POST http://localhost:8000/api/v2/insights/query \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "What is our rejection rate for pre-existing conditions and what does the policy say about the waiting period?"
+    "prompt": "What is our rejection rate for pre-existing conditions and what does the policy say about the waiting period?"
   }'
 ```
 
@@ -426,11 +426,11 @@ curl -X POST http://localhost:8000/api/v1/ask \
 **Expected Response:**
 ```json
 {
-  "query": "What is our rejection rate for pre-existing conditions...",
+  "prompt": "What is our rejection rate for pre-existing conditions...",
   "query_type": "hybrid",
-  "answer": "**Policy Information:**\nPre-existing diseases have a waiting period of **48 months** from policy inception. After this period, they are covered at par with other claims with no additional deductible.\n\n**Claims Data Analysis:**\nOut of 150 total claims, **6 were rejected** due to pre-existing condition waiting period not being completed, representing a **4% rejection rate** for this specific reason.\n\n**Sources:**\n[1] Policy-1, Pre-existing Diseases",
+  "answer": "**Policy Information:**\nPre-existing diseases have a waiting period of **48 months** from policy inception. After this period, they are covered at par with other service_cases with no additional fixed share.\n\n**Claims Data Analysis:**\nOut of 150 total service_cases, **6 were rejected** due to pre-existing condition waiting period not being completed, representing a **4% rejection rate** for this specific reason.\n\n**Sources:**\n[1] Policy-1, Pre-existing Diseases",
   "citations": [...],
-  "sql_query": "SELECT COUNT(*) FROM claims WHERE rejection_reason LIKE '%pre-existing%'",
+  "sql_query": "SELECT COUNT(*) FROM service_cases WHERE decision_reason LIKE '%pre-existing%'",
   "sql_result": [{"count": 6}],
   "latency_ms": 2100,
   "model_used": "gpt-4-turbo-preview"
@@ -439,20 +439,20 @@ curl -X POST http://localhost:8000/api/v1/ask \
 
 ### 5.2 Query Classification Endpoint
 
-**Endpoint:** `POST /api/v1/ask/classify`
+**Endpoint:** `POST /api/v2/insights/route-preview`
 
 Test classification without executing the query.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask/classify \
+curl -X POST http://localhost:8000/api/v2/insights/route-preview \
   -H "Content-Type: application/json" \
-  -d '{"query": "What is the room rent limit?"}'
+  -d '{"prompt": "What is the room rent limit?"}'
 ```
 
 **Response:**
 ```json
 {
-  "query": "What is the room rent limit?",
+  "prompt": "What is the room rent limit?",
   "query_type": "document_qa",
   "confidence": 0.9,
   "reasoning": "Query contains policy/coverage keywords"
@@ -461,26 +461,26 @@ curl -X POST http://localhost:8000/api/v1/ask/classify \
 
 ### 5.3 Force RAG Endpoint
 
-**Endpoint:** `POST /api/v1/ask/rag`
+**Endpoint:** `POST /api/v2/insights/document-only`
 
 Bypass classification and force document search.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask/rag \
+curl -X POST http://localhost:8000/api/v2/insights/document-only \
   -H "Content-Type: application/json" \
-  -d '{"query": "Tell me about exclusions"}'
+  -d '{"prompt": "Tell me about exclusions"}'
 ```
 
 ### 5.4 Force SQL Endpoint
 
-**Endpoint:** `POST /api/v1/ask/sql`
+**Endpoint:** `POST /api/v2/insights/records-only`
 
 Bypass classification and force SQL query.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask/sql \
+curl -X POST http://localhost:8000/api/v2/insights/records-only \
   -H "Content-Type: application/json" \
-  -d '{"query": "Show claim statistics"}'
+  -d '{"prompt": "Show claim statistics"}'
 ```
 
 ---
@@ -491,50 +491,50 @@ curl -X POST http://localhost:8000/api/v1/ask/sql \
 
 ```bash
 # Test direct DB connection
-docker exec -it policymind-db psql -U policymind -d policymind -c "SELECT COUNT(*) FROM policies;"
+docker exec -it policymind-db psql -U policymind -d policymind -c "SELECT COUNT(*) FROM benefit_contracts;"
 ```
 
-**Expected:** Returns count of policies (3 after seeding)
+**Expected:** Returns count of benefit_contracts (3 after seeding)
 
 ### 6.2 Vector Search (pgvector)
 
 ```bash
 # Check vector index exists
-docker exec -it policymind-db psql -U policymind -d policymind -c "\d policy_chunks"
+docker exec -it policymind-db psql -U policymind -d policymind -c "\d contract_passages"
 ```
 
 **Look for:** `embedding vector(1536)` column
 
 **Test vector search via API:**
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask/rag \
+curl -X POST http://localhost:8000/api/v2/insights/document-only \
   -H "Content-Type: application/json" \
-  -d '{"query": "maternity benefits", "search_method": "vector"}'
+  -d '{"prompt": "family-support benefits", "retrieval_strategy": "vector"}'
 ```
 
 ### 6.3 BM25 Search
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask/rag \
+curl -X POST http://localhost:8000/api/v2/insights/document-only \
   -H "Content-Type: application/json" \
-  -d '{"query": "maternity benefits", "search_method": "bm25"}'
+  -d '{"prompt": "family-support benefits", "retrieval_strategy": "bm25"}'
 ```
 
 ### 6.4 Hybrid Search (RRF)
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask/rag \
+curl -X POST http://localhost:8000/api/v2/insights/document-only \
   -H "Content-Type: application/json" \
-  -d '{"query": "maternity benefits", "search_method": "hybrid"}'
+  -d '{"prompt": "family-support benefits", "retrieval_strategy": "hybrid"}'
 ```
 
 ### 6.5 LLM (OpenAI)
 
 ```bash
 # Classification uses LLM
-curl -X POST http://localhost:8000/api/v1/ask/classify \
+curl -X POST http://localhost:8000/api/v2/insights/route-preview \
   -H "Content-Type: application/json" \
-  -d '{"query": "This is a test query about coverage and claims"}'
+  -d '{"prompt": "This is a test query about coverage and service_cases"}'
 ```
 
 **If LLM fails:** Response will have `"confidence": 0.5` and `"reasoning": "Fallback due to classification error"`
@@ -542,9 +542,9 @@ curl -X POST http://localhost:8000/api/v1/ask/classify \
 ### 6.6 SQL Generation & Execution
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ask/sql \
+curl -X POST http://localhost:8000/api/v2/insights/records-only \
   -H "Content-Type: application/json" \
-  -d '{"query": "Show top 5 hospitals by number of claims"}'
+  -d '{"prompt": "Show top 5 care_providers by number of service_cases"}'
 ```
 
 **Verify:** 
@@ -555,7 +555,7 @@ curl -X POST http://localhost:8000/api/v1/ask/sql \
 
 Any RAG query should include citations. Verify:
 - `citations` array is not empty
-- Each citation has `source_id`, `policy_name`, `chunk_text`, `relevance_score`
+- Each citation has `source_id`, `contract_title`, `chunk_text`, `relevance_score`
 
 ---
 
@@ -563,51 +563,48 @@ Any RAG query should include citations. Verify:
 
 ### 7.1 Ingest Text Content
 
-**Endpoint:** `POST /api/v1/ingest`
+**Endpoint:** `PUT /api/v2/knowledge/scopes/{scope_key}/source`
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ingest \
+curl -X PUT http://localhost:8000/api/v2/knowledge/scopes/1/source \
   -H "Content-Type: application/json" \
   -d '{
-    "policy_id": 1,
-    "document_text": "DENTAL COVERAGE\n\nDental treatments are covered only when they require hospitalization for more than 24 hours.\n\nCoverage Limit: ₹25,000 per year\n\nExclusions:\n- Routine dental checkups\n- Cosmetic dental procedures\n- Dentures and implants",
-    "chunk_size": 500,
-    "chunk_overlap": 50
+    "source_text": "DENTAL COVERAGE\n\nDental treatments are covered only when they require hospitalization for more than 24 hours.\n\nCoverage Limit: CU 25,000 per year\n\nExclusions:\n- Routine dental checkups\n- Cosmetic dental procedures\n- Dentures and implants",
+    "segment_length": 500,
+    "segment_overlap": 50
   }'
 ```
 
 **Expected Response:**
 ```json
 {
-  "policy_id": 1,
-  "chunks_created": 1,
+  "scope_key": 1,
+  "segments_created": 1,
   "processing_time_ms": 1250,
-  "message": "Successfully ingested 1 chunks for policy 'Group Health Shield Premium'"
+  "message": "Indexed 1 segments for contract 'Northstar Benefits Plus'"
 }
 ```
 
 **What Happens Internally:**
 1. Text is split into chunks (configurable size/overlap)
 2. Each chunk is embedded via OpenAI
-3. Chunks + embeddings stored in `policy_chunks` table
+3. Chunks + embeddings stored in `contract_passages` table
 4. Vector index updated for similarity search
 
 ### 7.2 Ingest from URL
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ingest \
+curl -X PUT http://localhost:8000/api/v2/knowledge/scopes/1/source \
   -H "Content-Type: application/json" \
   -d '{
-    "policy_id": 1,
-    "document_url": "https://example.com/policy.txt"
+    "source_uri": "https://example.com/policy.txt"
   }'
 ```
 
 ### 7.3 Upload File
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ingest/file \
-  -F "policy_id=1" \
+curl -X PUT http://localhost:8000/api/v2/knowledge/scopes/1/file \
   -F "file=@/path/to/document.txt"
 ```
 
@@ -616,15 +613,15 @@ curl -X POST http://localhost:8000/api/v1/ingest/file \
 ### 7.4 Check Ingestion Stats
 
 ```bash
-curl http://localhost:8000/api/v1/ingest/stats/1
+curl http://localhost:8000/api/v2/knowledge/scopes/1/index-status
 ```
 
 **Response:**
 ```json
 {
-  "policy_id": 1,
-  "chunk_count": 46,
-  "avg_chunk_length": 450.5,
+  "scope_key": 1,
+  "segment_count": 46,
+  "avg_segment_length": 450.5,
   "first_ingested": "2024-01-15T10:30:00",
   "last_ingested": "2024-01-15T10:35:00"
 }
@@ -634,12 +631,12 @@ curl http://localhost:8000/api/v1/ingest/stats/1
 
 ```bash
 # Delete existing chunks
-curl -X DELETE http://localhost:8000/api/v1/ingest/1
+curl -X DELETE http://localhost:8000/api/v2/knowledge/scopes/1/source
 
 # Re-ingest
-curl -X POST http://localhost:8000/api/v1/ingest \
+curl -X PUT http://localhost:8000/api/v2/knowledge/scopes/1/source \
   -H "Content-Type: application/json" \
-  -d '{"policy_id": 1, "document_text": "..."}'
+  -d '{"source_text": "..."}'
 ```
 
 ---
@@ -649,7 +646,7 @@ curl -X POST http://localhost:8000/api/v1/ingest \
 ### 8.1 List Evaluation Questions
 
 ```bash
-curl "http://localhost:8000/api/v1/eval/questions?limit=5"
+curl "http://localhost:8000/api/v2/eval/questions?limit=5"
 ```
 
 **Response:**
@@ -657,8 +654,8 @@ curl "http://localhost:8000/api/v1/eval/questions?limit=5"
 [
   {
     "question_id": 1,
-    "question": "What is the maternity coverage limit?",
-    "expected_answer": "₹50,000 per pregnancy",
+    "question": "What is the family-support coverage limit?",
+    "expected_answer": "CU 50,000 per pregnancy",
     "query_type": "document_qa",
     "difficulty": "easy"
   },
@@ -669,7 +666,7 @@ curl "http://localhost:8000/api/v1/eval/questions?limit=5"
 ### 8.2 Run Evaluation
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/eval/run \
+curl -X POST http://localhost:8000/api/v2/eval/run \
   -H "Content-Type: application/json" \
   -d '{
     "sample_size": 10
@@ -690,7 +687,7 @@ curl -X POST http://localhost:8000/api/v1/eval/run \
     "avg_similarity": 0.82,
     "by_query_type": {
       "document_qa": {"total": 6, "correct": 5, "accuracy": 0.83},
-      "claims_sql": {"total": 4, "correct": 3, "accuracy": 0.75}
+      "records_sql": {"total": 4, "correct": 3, "accuracy": 0.75}
     },
     "by_difficulty": {
       "easy": {"total": 4, "correct": 4, "accuracy": 1.0},
@@ -706,12 +703,12 @@ curl -X POST http://localhost:8000/api/v1/eval/run \
 
 ```bash
 # By query type
-curl -X POST http://localhost:8000/api/v1/eval/run \
+curl -X POST http://localhost:8000/api/v2/eval/run \
   -H "Content-Type: application/json" \
   -d '{"query_types": ["document_qa"]}'
 
 # By specific questions
-curl -X POST http://localhost:8000/api/v1/eval/run \
+curl -X POST http://localhost:8000/api/v2/eval/run \
   -H "Content-Type: application/json" \
   -d '{"question_ids": [1, 2, 3]}'
 ```
@@ -719,13 +716,13 @@ curl -X POST http://localhost:8000/api/v1/eval/run \
 ### 8.4 View Evaluation History
 
 ```bash
-curl http://localhost:8000/api/v1/eval/history
+curl http://localhost:8000/api/v2/eval/history
 ```
 
 ### 8.5 View Run Details
 
 ```bash
-curl http://localhost:8000/api/v1/eval/run/abc123-...
+curl http://localhost:8000/api/v2/eval/run/abc123-...
 ```
 
 ---
@@ -771,7 +768,7 @@ curl http://localhost:8000/api/v1/eval/run/abc123-...
 | Issue | Cause | Fix |
 |-------|-------|-----|
 | Irrelevant results | Poor embeddings | Re-ingest with smaller chunks |
-| Missing results | Query mismatch | Try different search_method |
+| Missing results | Query mismatch | Try another retrieval strategy |
 | No citations | No chunks in DB | Seed data or ingest documents |
 
 ### 9.6 SQL Generation Issues
@@ -800,11 +797,11 @@ curl http://localhost:8000/api/v1/eval/run/abc123-...
 | Feature | Test Command | Expected Result |
 |---------|--------------|-----------------|
 | Health | `curl /health` | `status: healthy` |
-| RAG Query | `POST /ask` with coverage question | Answer + citations |
-| SQL Query | `POST /ask` with claims question | Answer + sql_result |
-| Hybrid | `POST /ask` with mixed question | Combined answer |
-| Classification | `POST /ask/classify` | query_type + confidence |
-| Ingestion | `POST /ingest` | chunks_created > 0 |
+| RAG Query | `POST /insights/query` with coverage question | Answer + citations |
+| SQL Query | `POST /insights/query` with service_cases question | Answer + sql_result |
+| Hybrid | `POST /insights/query` with mixed question | Combined answer |
+| Classification | `POST /insights/route-preview` | query_type + confidence |
+| Ingestion | `PUT /knowledge/scopes/{scope_key}/source` | segments_created > 0 |
 | Evaluation | `POST /eval/run` | accuracy score |
 
 ### Quick Validation Script
@@ -815,19 +812,19 @@ echo "1. Health Check..."
 curl -s http://localhost:8000/health | jq .status
 
 echo "2. Document Q&A..."
-curl -s -X POST http://localhost:8000/api/v1/ask \
+curl -s -X POST http://localhost:8000/api/v2/insights/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "What is covered?"}' | jq .query_type
+  -d '{"prompt": "What is covered?"}' | jq .query_type
 
 echo "3. SQL Query..."
-curl -s -X POST http://localhost:8000/api/v1/ask \
+curl -s -X POST http://localhost:8000/api/v2/insights/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "How many claims?"}' | jq .query_type
+  -d '{"prompt": "How many service_cases?"}' | jq .query_type
 
 echo "4. Classification..."
-curl -s -X POST http://localhost:8000/api/v1/ask/classify \
+curl -s -X POST http://localhost:8000/api/v2/insights/route-preview \
   -H "Content-Type: application/json" \
-  -d '{"query": "test"}' | jq .confidence
+  -d '{"prompt": "test"}' | jq .confidence
 
 echo "All checks complete!"
 ```
@@ -849,14 +846,14 @@ echo "All checks complete!"
    GET /health/detailed
    ```
    - "Shows all components are operational"
-   - "We have 3 policies, 45 document chunks in our vector store"
+   - "We have 3 benefit_contracts, 45 document chunks in our vector store"
 
 #### Part 2: Document Q&A - RAG (2 min)
 
 3. **Ask a coverage question**
    ```json
-   POST /api/v1/ask
-   {"query": "What is the maternity coverage limit?"}
+   POST /api/v2/insights/query
+   {"prompt": "What is the family-support coverage limit?"}
    ```
    
    **Explain:**
@@ -869,12 +866,12 @@ echo "All checks complete!"
 
 4. **Ask a data question**
    ```json
-   POST /api/v1/ask
-   {"query": "How many claims were rejected last year and what were the top reasons?"}
+   POST /api/v2/insights/query
+   {"prompt": "How many service_cases were rejected last year and what were the top reasons?"}
    ```
    
    **Explain:**
-   - "Classified as claims_sql - needs database query"
+   - "Classified as records_sql - needs database query"
    - "System generates SQL using GPT-4 with schema awareness"
    - "Safety checks prevent SQL injection"
    - "Self-correction: if SQL fails, it regenerates up to 2 times"
@@ -884,8 +881,8 @@ echo "All checks complete!"
 
 5. **Ask a complex question**
    ```json
-   POST /api/v1/ask
-   {"query": "What's our rejection rate for pre-existing conditions and what does the policy say about waiting periods?"}
+   POST /api/v2/insights/query
+   {"prompt": "What's our rejection rate for pre-existing conditions and what does the policy say about waiting periods?"}
    ```
    
    **Explain:**
@@ -897,8 +894,8 @@ echo "All checks complete!"
 
 6. **Show classification endpoint**
    ```json
-   POST /api/v1/ask/classify
-   {"query": "Some test query"}
+   POST /api/v2/insights/route-preview
+   {"prompt": "Some test query"}
    ```
    
    **Explain:**
@@ -922,7 +919,7 @@ echo "All checks complete!"
 > Three layers: (1) Query classifier rejects dangerous keywords before routing, (2) SQL agent validates generated SQL starts with SELECT/WITH only, (3) Banned keywords list blocks DROP, DELETE, INSERT, etc. Plus we use parameterized queries.
 
 **Q: Why not use LLM for coverage calculations?**
-> LLMs are unreliable for arithmetic. We have a deterministic CoverageCalculator class that handles room rent limits, copay, deductibles with exact Decimal math. The LLM explains results, but never computes them.
+> LLMs are unreliable for arithmetic. We have a deterministic CoverageCalculator class that handles room rent limits, percentage share, fixed shares with exact Decimal math. The LLM explains results, but never computes them.
 
 **Q: How do you handle LLM failures?**
 > Retry with exponential backoff (3 attempts). For classification, we fall back to document_qa with low confidence. For SQL, we provide error context to the LLM for self-correction.
@@ -935,30 +932,30 @@ echo "All checks complete!"
 ## Appendix: Sample Queries by Category
 
 ### Document Q&A Queries
-- "What is the maternity coverage limit?"
+- "What is the family-support coverage limit?"
 - "Is dental treatment covered?"
 - "What are the permanent exclusions?"
 - "What's the waiting period for pre-existing diseases?"
 - "What documents are required for claim submission?"
 - "What's the room rent limit for premium plan?"
 - "Is Ayurveda treatment covered?"
-- "What is the copay percentage?"
+- "What is the percentage share percentage?"
 
 ### Claims SQL Queries
-- "How many claims were filed this year?"
+- "How many service_cases were filed this year?"
 - "What is the total approved amount?"
-- "Show top 10 hospitals by claim count"
+- "Show top 10 care_providers by claim count"
 - "What's the average claim amount by diagnosis?"
-- "How many claims are pending?"
+- "How many service_cases are pending?"
 - "What's the claim approval rate?"
-- "Show claims by status breakdown"
-- "Which member has the highest claims?"
+- "Show service_cases by status breakdown"
+- "Which member has the highest service_cases?"
 
 ### Hybrid Queries
 - "What's our rejection rate and what does the policy say about exclusions?"
-- "How do maternity claims compare to the policy limit?"
-- "Show claims for pre-existing conditions and explain the waiting period"
-- "What's the copay impact on our high-value claims?"
+- "How do family-support service_cases compare to the policy limit?"
+- "Show service_cases for pre-existing conditions and explain the waiting period"
+- "What's the percentage share impact on our high-value service_cases?"
 
 ---
 

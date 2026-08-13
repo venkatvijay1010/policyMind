@@ -149,7 +149,7 @@ async def run_evaluation(
             query_result = await graph.invoke(query=q.question)
             
             # Compute similarity
-            similarity = compute_similarity(q.expected_answer, query_result.answer)
+            similarity = compute_similarity(q.ground_truth_answer, query_result.answer)
             is_correct = similarity >= 0.7  # 70% threshold
             
             if is_correct:
@@ -177,7 +177,7 @@ async def run_evaluation(
             eval_result = EvalResult(
                 question_id=q.id,
                 question=q.question,
-                expected_answer=q.expected_answer,
+                expected_answer=q.ground_truth_answer,
                 actual_answer=query_result.answer,
                 query_type=QueryTypeEnum(qt),
                 is_correct=is_correct,
@@ -211,7 +211,7 @@ async def run_evaluation(
             results.append(EvalResult(
                 question_id=q.id,
                 question=q.question,
-                expected_answer=q.expected_answer,
+                expected_answer=q.ground_truth_answer,
                 actual_answer="",
                 query_type=QueryTypeEnum(q.query_type),
                 is_correct=False,

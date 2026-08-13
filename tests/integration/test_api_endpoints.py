@@ -66,8 +66,8 @@ class TestAskEndpoints:
         ) as client:
             # Empty query should fail
             response = await client.post(
-                "/api/v1/ask",
-                json={"query": ""}
+                "/api/v2/insights/query",
+                json={"prompt": ""}
             )
             assert response.status_code == 422  # Validation error
     
@@ -81,8 +81,8 @@ class TestAskEndpoints:
             base_url="http://test"
         ) as client:
             response = await client.post(
-                "/api/v1/ask",
-                json={"query": "hi"}  # Too short (min 3 chars)
+                "/api/v2/insights/query",
+                json={"prompt": "hi"}  # Too short (min 3 chars)
             )
             assert response.status_code == 422
 
@@ -99,9 +99,9 @@ class TestIngestEndpoints:
             transport=ASGITransport(app=app),
             base_url="http://test"
         ) as client:
-            response = await client.post(
-                "/api/v1/ingest",
-                json={"policy_id": 1}  # Missing document_text and document_url
+            response = await client.put(
+                "/api/v2/knowledge/scopes/1/source",
+                json={}  # Missing source_text and source_uri
             )
             # Should fail validation or return 400
             assert response.status_code in [400, 422]

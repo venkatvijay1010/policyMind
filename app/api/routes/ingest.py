@@ -8,14 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 import structlog
 
-from app.api.schemas.schemas import IngestRequest, IngestResponse
+from app.api.schemas.schemas import KnowledgeSourceRequest, KnowledgeSourceResponse
 from app.infrastructure.database.postgres import get_db_session
 from app.infrastructure.llm.embeddings import EmbeddingService
 from app.config import settings
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/ingest", tags=["Ingestion"])
+router = APIRouter(prefix="/knowledge/scopes", tags=["Knowledge"])
 
 
 def chunk_text(
@@ -34,7 +34,7 @@ def chunk_text(
     
     current_chunk = ""
     current_position = 0
-    chunk_index = 0
+    passage_order = 0
     
     for para in paragraphs:
         para = para.strip()
@@ -46,11 +46,11 @@ def chunk_text(
             if current_chunk:
                 chunks.append({
                     "content": current_chunk.strip(),
-                    "chunk_index": chunk_index,
-                    "char_start": current_position,
-                    "char_end": current_position + len(current_chunk)
+                    "passage_order": passage_order,
+                    "source_offset_start": current_position,
+                    "source_offset_end": current_position + len(current_chunk)
                 })
-                chunk_index += 1
+                passage_order += 1
                 
                 # Keep overlap
                 overlap_text = current_chunk[-chunk_overlap:] if len(current_chunk) > chunk_overlap else current_chunk
@@ -61,11 +61,11 @@ def chunk_text(
                 while len(para) > chunk_size:
                     chunks.append({
                         "content": para[:chunk_size],
-                        "chunk_index": chunk_index,
-                        "char_start": current_position,
-                        "char_end": current_position + chunk_size
+                        "passage_order": passage_order,
+                        "source_offset_start": current_position,
+                        "source_offset_end": current_position + chunk_size
                     })
-                    chunk_index += 1
+                    passage_order += 1
                     para = para[chunk_size - chunk_overlap:]
                     current_position += chunk_size - chunk_overlap
                 
@@ -77,17 +77,18 @@ def chunk_text(
     if current_chunk.strip():
         chunks.append({
             "content": current_chunk.strip(),
-            "chunk_index": chunk_index,
-            "char_start": current_position,
-            "char_end": current_position + len(current_chunk)
+            "passage_order": passage_order,
+            "source_offset_start": current_position,
+            "source_offset_end": current_position + len(current_chunk)
         })
     
     return chunks
 
 
-@router.post("", response_model=IngestResponse)
-async def ingest_document(
-    request: IngestRequest,
+@router.put("/{scope_key}/source", response_model=KnowledgeSourceResponse)
+async def index_contract_source(
+    scope_key: int,
+    request: KnowledgeSourceRequest,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -98,47 +99,47 @@ async def ingest_document(
     2. Embedded using OpenAI embeddings
     3. Stored in PostgreSQL with pgvector
     
-    You can provide either `document_text` (raw text) or `document_url` (URL to fetch).
+    Supply either `source_text` (raw content) or `source_uri` (a public content location).
     """
     start_time = time.time()
     
     # Validate policy exists
     result = await db.execute(
-        text("SELECT id, policy_name FROM policies WHERE id = :id"),
-        {"id": request.policy_id}
+        text("SELECT id, contract_title FROM benefit_contracts WHERE id = :id"),
+        {"id": scope_key}
     )
     policy = result.fetchone()
     if not policy:
-        raise HTTPException(status_code=404, detail=f"Policy {request.policy_id} not found")
+        raise HTTPException(status_code=404, detail=f"Knowledge scope {scope_key} not found")
     
     # Get document text
-    if request.document_text:
-        text_content = request.document_text
-    elif request.document_url:
+    if request.source_text:
+        text_content = request.source_text
+    elif request.source_uri:
         # Fetch from URL
         import httpx
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(request.document_url)
+                response = await client.get(request.source_uri)
                 response.raise_for_status()
                 text_content = response.text
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to fetch URL: {str(e)}")
     else:
-        raise HTTPException(status_code=400, detail="Either document_text or document_url required")
+        raise HTTPException(status_code=400, detail="Either source_text or source_uri is required")
     
     logger.info(
         "Starting ingestion",
-        policy_id=request.policy_id,
+        scope_key=scope_key,
         text_length=len(text_content),
-        chunk_size=request.chunk_size
+        segment_length=request.segment_length
     )
     
     # Chunk the text
     chunks = chunk_text(
         text_content,
-        chunk_size=request.chunk_size,
-        chunk_overlap=request.chunk_overlap
+        chunk_size=request.segment_length,
+        chunk_overlap=request.segment_overlap
     )
     
     if not chunks:
@@ -160,22 +161,22 @@ async def ingest_document(
         try:
             await db.execute(
                 text("""
-                    INSERT INTO policy_chunks 
-                    (policy_id, content, chunk_index, char_start, char_end, embedding)
-                    VALUES (:policy_id, :content, :chunk_index, :char_start, :char_end, :embedding)
+                    INSERT INTO contract_passages
+                    (contract_id, content, passage_order, source_offset_start, source_offset_end, embedding)
+                    VALUES (:contract_id, :content, :passage_order, :source_offset_start, :source_offset_end, :embedding)
                 """),
                 {
-                    "policy_id": request.policy_id,
+                    "contract_id": scope_key,
                     "content": chunk_data["content"],
-                    "chunk_index": chunk_data["chunk_index"],
-                    "char_start": chunk_data["char_start"],
-                    "char_end": chunk_data["char_end"],
+                    "passage_order": chunk_data["passage_order"],
+                    "source_offset_start": chunk_data["source_offset_start"],
+                    "source_offset_end": chunk_data["source_offset_end"],
                     "embedding": str(embedding)  # pgvector format
                 }
             )
             chunks_created += 1
         except Exception as e:
-            logger.error("Failed to insert chunk", error=str(e), chunk_index=chunk_data["chunk_index"])
+            logger.error("Failed to insert chunk", error=str(e), passage_order=chunk_data["passage_order"])
     
     await db.commit()
     
@@ -183,22 +184,22 @@ async def ingest_document(
     
     logger.info(
         "Ingestion complete",
-        policy_id=request.policy_id,
-        chunks_created=chunks_created,
+        scope_key=scope_key,
+        segments_created=chunks_created,
         processing_time_ms=processing_time
     )
     
-    return IngestResponse(
-        policy_id=request.policy_id,
-        chunks_created=chunks_created,
+    return KnowledgeSourceResponse(
+        scope_key=scope_key,
+        segments_created=chunks_created,
         processing_time_ms=processing_time,
-        message=f"Successfully ingested {chunks_created} chunks for policy '{policy.policy_name}'"
+        message=f"Indexed {chunks_created} segments for contract '{policy.contract_title}'"
     )
 
 
-@router.post("/file")
+@router.put("/{scope_key}/file")
 async def ingest_file(
-    policy_id: int,
+    scope_key: int,
     file: UploadFile = File(...),
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
@@ -220,19 +221,18 @@ async def ingest_file(
         raise HTTPException(status_code=400, detail="Unsupported file type. Use .txt or .md")
     
     # Delegate to main ingest
-    request = IngestRequest(
-        policy_id=policy_id,
-        document_text=text_content,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
+    request = KnowledgeSourceRequest(
+        source_text=text_content,
+        segment_length=chunk_size,
+        segment_overlap=chunk_overlap
     )
     
-    return await ingest_document(request, db)
+    return await index_contract_source(scope_key, request, db)
 
 
-@router.delete("/{policy_id}")
+@router.delete("/{scope_key}/source")
 async def delete_chunks(
-    policy_id: int,
+    scope_key: int,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -240,22 +240,22 @@ async def delete_chunks(
     Useful for re-ingestion.
     """
     result = await db.execute(
-        text("DELETE FROM policy_chunks WHERE policy_id = :policy_id RETURNING id"),
-        {"policy_id": policy_id}
+        text("DELETE FROM contract_passages WHERE contract_id = :contract_id RETURNING id"),
+        {"contract_id": scope_key}
     )
     deleted = result.rowcount
     await db.commit()
     
     return {
-        "policy_id": policy_id,
-        "chunks_deleted": deleted,
-        "message": f"Deleted {deleted} chunks for policy {policy_id}"
+        "scope_key": scope_key,
+        "segments_deleted": deleted,
+        "message": f"Deleted {deleted} indexed segments for knowledge scope {scope_key}"
     }
 
 
-@router.get("/stats/{policy_id}")
+@router.get("/{scope_key}/index-status")
 async def ingestion_stats(
-    policy_id: int,
+    scope_key: int,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -268,17 +268,17 @@ async def ingestion_stats(
                 AVG(LENGTH(content)) as avg_chunk_length,
                 MIN(created_at) as first_ingested,
                 MAX(created_at) as last_ingested
-            FROM policy_chunks
-            WHERE policy_id = :policy_id
+            FROM contract_passages
+            WHERE contract_id = :contract_id
         """),
-        {"policy_id": policy_id}
+        {"contract_id": scope_key}
     )
     stats = result.fetchone()
     
     return {
-        "policy_id": policy_id,
-        "chunk_count": stats.chunk_count or 0,
-        "avg_chunk_length": round(stats.avg_chunk_length or 0, 2),
+        "scope_key": scope_key,
+        "segment_count": stats.chunk_count or 0,
+        "avg_segment_length": round(stats.avg_chunk_length or 0, 2),
         "first_ingested": stats.first_ingested,
         "last_ingested": stats.last_ingested
     }

@@ -9,27 +9,27 @@ import random
 
 POLICY_TEMPLATES = [
     {
-        "policy_name": "Group Health Shield Premium",
-        "product_type": "GROUP_HEALTH",
+        "contract_title": "Northstar Benefits Plus",
+        "plan_category": "EMPLOYEE_BENEFITS",
         "sections": [
             {
                 "name": "Coverage Summary",
                 "content": """
 COVERAGE SUMMARY
 
-Sum Insured Options: ₹3 Lakhs, ₹5 Lakhs, ₹10 Lakhs, ₹25 Lakhs
+Benefit Cap Options: CU 300,000, CU 500,000, CU 1,000,000, CU 2,500,000
 
 This policy covers the following:
-- Inpatient Hospitalization (24+ hours)
+- Facility stays (24+ hours)
 - Day Care Procedures (less than 24 hours)
-- Pre and Post Hospitalization (30 days pre, 60 days post)
+- Pre- and post-service support (30 days before, 60 days after)
 - Domiciliary Treatment
 - Organ Donor Expenses
-- Alternative Treatments (Ayurveda, Homeopathy, Unani)
+- Approved complementary treatments
 
 Room Rent Limits:
-- Standard Plan: ₹5,000 per day or 1% of Sum Insured (whichever is lower)
-- Enhanced Plan: ₹10,000 per day or 2% of Sum Insured
+- Standard Plan: CU 5,000 per day or 1% of the benefit cap (whichever is lower)
+- Enhanced Plan: CU 10,000 per day or 2% of the benefit cap
 - Premium Plan: No sub-limit on room rent
 
 ICU Charges: Up to 2x the applicable room rent limit
@@ -40,13 +40,13 @@ ICU Charges: Up to 2x the applicable room rent limit
                 "content": """
 MATERNITY BENEFITS
 
-Coverage Amount: Up to ₹50,000 per pregnancy
+Benefit Amount: Up to CU 50,000 per event
 
 Waiting Period: 36 months from policy inception date
 
 What's Covered:
-- Normal Delivery: ₹25,000
-- Cesarean Section: ₹50,000
+- Standard service: CU 25,000
+- Surgical service: CU 50,000
 - Pre-natal and Post-natal expenses (within limits)
 - New Born Baby Cover: Covered from day 1 for first 90 days
 
@@ -66,7 +66,7 @@ Waiting Period: 48 months for pre-existing conditions
 Definition: Any condition, ailment, or injury that existed prior to the first policy inception date, whether or not diagnosed.
 
 Coverage After Waiting Period:
-- Full coverage at par with other claims
+- Full coverage at par with other service_cases
 - No additional deductible or co-payment
 
 Disclosure Requirements:
@@ -96,7 +96,7 @@ The following are NOT covered under this policy:
 6. Self-inflicted injuries or suicide attempts
 7. War, nuclear contamination
 8. Participation in hazardous sports/activities
-9. Treatment outside India
+9. Treatment outside the covered region
 10. Experimental or unproven treatments
 11. Treatments for addiction (drugs, alcohol)
 12. Congenital conditions (after age 16)
@@ -111,30 +111,28 @@ TIME-BOUND EXCLUSIONS (Waiting Period):
             {
                 "name": "Claim Process",
                 "content": """
-CLAIM PROCESS
+SERVICE-CASE PROCESS
 
-CASHLESS CLAIMS:
-1. Pre-authorization required at network hospital
-2. Submit Employee ID and Policy Number
-3. Hospital coordinates with TPA
-4. Approval within 2-4 hours for planned procedures
-5. Emergency: Post-facto approval within 24 hours
+DIRECT-BILLING CASES:
+1. Ask a participating provider to open a service case
+2. Share the participant access code and contract reference
+3. The provider sends a benefit-check request to the service partner
+4. Planned services receive a response by the next business day
+5. Urgent services may be reviewed after stabilization
 
 Required Documents:
-- Claim form (PART A & B completed)
-- Hospital discharge summary
+- Service-case form
+- Provider completion summary
 - Medical bills and receipts (originals)
 - Investigation reports (X-ray, MRI, blood tests)
 - Doctor's prescription and diagnosis
-- Photo ID proof
+- Participant access-code confirmation
 
-REIMBURSEMENT CLAIMS:
-1. Settle hospital bill directly
-2. Submit claim within 30 days of discharge
-3. Process time: 7-15 working days
-4. Payment via NEFT to registered bank account
-
-Claim Settlement Ratio: 96.5% (FY 2023-24)
+MEMBER-PAID CASES:
+1. Pay the provider directly
+2. Submit the service case within 45 days of completion
+3. Typical review window: 5-12 business days
+4. Approved amounts are sent through the configured payout method
 """
             },
             {
@@ -143,42 +141,42 @@ Claim Settlement Ratio: 96.5% (FY 2023-24)
 CO-PAYMENT AND DEDUCTIBLES
 
 COPAY (Your Share of Claim):
-- Standard Plan: 20% copay for all claims
-- Enhanced Plan: 10% copay for all claims  
+- Standard Plan: 20% copay for all service_cases
+- Enhanced Plan: 10% percentage share for all service cases
 - Premium Plan: No copay
 
 DEDUCTIBLE:
-- Per claim deductible: ₹5,000 (Standard), ₹2,500 (Enhanced), Nil (Premium)
+- Per-case fixed share: CU 5,000 (Standard), CU 2,500 (Enhanced), none (Premium)
 - Applied once per hospitalization
 
 SPECIAL CONDITIONS:
-- Claims above ₹10 Lakhs: Additional 10% copay
-- Treatment in non-network hospital: 20% additional copay
+- Cases above CU 1,000,000: additional 10% member share
+- Service from a non-participating provider: additional 20% member share
 - Room upgrade beyond entitlement: Proportional deduction
 
 Example Calculation:
-Claim Amount: ₹1,00,000
-Deductible (Standard): ₹5,000
-After Deductible: ₹95,000
-Copay (20%): ₹19,000
-Net Payable by Insurer: ₹76,000
+Requested Amount: CU 100,000
+Fixed Share (Standard): CU 5,000
+After Fixed Share: CU 95,000
+Percentage Share (20%): CU 19,000
+Payable Amount: CU 76,000
 """
             }
         ]
     },
     {
-        "policy_name": "Corporate Health Guard",
-        "product_type": "GROUP_HEALTH",
+        "contract_title": "Cedar Workforce Benefits",
+        "plan_category": "EMPLOYEE_BENEFITS",
         "sections": [
             {
                 "name": "Overview",
                 "content": """
-CORPORATE HEALTH GUARD - OVERVIEW
+CEDAR WORKFORCE BENEFITS - OVERVIEW
 
-This Group Health Insurance policy provides comprehensive medical coverage to employees and their dependents.
+This fictional workforce benefit contract provides medical support to participants and eligible dependants.
 
 Eligible Members:
-- Employee (Primary Insured)
+- Participant (primary enrollee)
 - Spouse
 - Up to 2 dependent children (up to age 25)
 - Dependent parents (optional add-on)
@@ -188,7 +186,7 @@ Entry Age:
 - Maximum: 65 years (new enrollment)
 - Continuation: Up to 80 years
 
-Policy Period: Annual (April to March or customized)
+Contract Period: Twelve months from the configured effective date
 """
             },
             {
@@ -219,11 +217,11 @@ This is a one-time benefit and does not reduce the base health cover.
 ]
 
 
-def generate_policy_document(policy_name: str, template_index: int = 0) -> str:
+def generate_contract_document(contract_title: str, template_index: int = 0) -> str:
     """Generate a full policy document from template."""
     template = POLICY_TEMPLATES[template_index % len(POLICY_TEMPLATES)]
     
-    doc_parts = [f"# {policy_name}\n\n"]
+    doc_parts = [f"# {contract_title}\n\n"]
     
     for section in template["sections"]:
         doc_parts.append(f"## {section['name']}\n")
@@ -233,35 +231,35 @@ def generate_policy_document(policy_name: str, template_index: int = 0) -> str:
     return "\n".join(doc_parts)
 
 
-def generate_sample_policies(count: int = 5) -> List[dict]:
-    """Generate multiple sample policies for database seeding."""
-    policies = []
-    companies = ["Acme Corp", "Tech Solutions", "Global Industries", "HealthFirst Inc", "Innovate Labs"]
+def generate_sample_benefit_contracts(count: int = 5) -> List[dict]:
+    """Generate multiple sample benefit_contracts for database seeding."""
+    benefit_contracts = []
+    sponsors = ["Blue Meadow Studio", "Northwind Works", "Cedar Labs", "Juniper Cooperative", "Lakehouse Design"]
     
     for i in range(count):
         template = POLICY_TEMPLATES[i % len(POLICY_TEMPLATES)]
         start_date = date.today() - timedelta(days=random.randint(30, 365))
         
-        policies.append({
-            "policy_number": f"POL{2024000 + i}",
-            "policy_name": f"{companies[i % len(companies)]} - {template['policy_name']}",
-            "product_type": template["product_type"],
-            "insured_name": companies[i % len(companies)],
-            "policy_start_date": start_date,
-            "policy_end_date": start_date + timedelta(days=365),
-            "total_lives": random.randint(50, 500),
-            "total_sum_insured": random.randint(5, 50) * 1000000,
-            "premium_amount": random.randint(10, 100) * 100000,
-            "document_text": generate_policy_document(template["policy_name"], i)
+        benefit_contracts.append({
+            "contract_ref": f"BEN-{730000 + i}",
+            "contract_title": f"{sponsors[i % len(sponsors)]} - {template['contract_title']}",
+            "plan_category": template["plan_category"],
+            "sponsor_label": sponsors[i % len(sponsors)],
+            "effective_from": start_date,
+            "effective_until": start_date + timedelta(days=365),
+            "participant_count": random.randint(50, 500),
+            "aggregate_benefit_cap": random.randint(5, 50) * 1000000,
+            "contribution_amount": random.randint(10, 100) * 100000,
+            "source_text": generate_contract_document(template["contract_title"], i)
         })
     
-    return policies
+    return benefit_contracts
 
 
 if __name__ == "__main__":
     # Generate sample output
-    policies = generate_sample_policies(2)
-    for p in policies:
-        print(f"Policy: {p['policy_name']}")
-        print(f"Lives: {p['total_lives']}")
+    benefit_contracts = generate_sample_benefit_contracts(2)
+    for p in benefit_contracts:
+        print(f"Policy: {p['contract_title']}")
+        print(f"Lives: {p['participant_count']}")
         print("-" * 50)

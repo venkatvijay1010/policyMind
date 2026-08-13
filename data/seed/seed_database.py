@@ -11,8 +11,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from sqlalchemy import text
 from app.infrastructure.database.postgres import async_session_factory, init_db
 from app.infrastructure.llm.embeddings import EmbeddingService
-from data.generators.policy_generator import generate_sample_policies, generate_policy_document
-from data.generators.claims_generator import generate_members, generate_claims
+from data.generators.policy_generator import generate_sample_benefit_contracts, generate_contract_document
+from data.generators.service_cases_generator import generate_participants, generate_service_cases
 from data.generators.eval_generator import generate_eval_questions
 
 
@@ -26,9 +26,9 @@ async def chunk_text(content: str, chunk_size: int = 1000, overlap: int = 200):
         if chunk.strip():
             chunks.append({
                 "content": chunk.strip(),
-                "chunk_index": len(chunks),
-                "char_start": start,
-                "char_end": end
+                "passage_order": len(chunks),
+                "source_offset_start": start,
+                "source_offset_end": end
             })
         start = end - overlap
     return chunks
@@ -70,69 +70,70 @@ async def seed_database():
             await session.commit()
             print(f"   Seeded {len(icd_codes)} ICD codes")
             
-            # 2. Seed hospitals
-            print("\n2. Seeding hospitals...")
-            hospitals = [
-                ("Apollo Hospital", "Chennai", "Tamil Nadu", True),
-                ("Fortis Hospital", "Mumbai", "Maharashtra", True),
-                ("Max Hospital", "Delhi", "Delhi", True),
-                ("Manipal Hospital", "Bangalore", "Karnataka", True),
-                ("City General Hospital", "Hyderabad", "Telangana", False),
+            # 2. Seed care_providers
+            print("\n2. Seeding care_providers...")
+            care_providers = [
+                ("Northstar Medical Center", "Lakeview", "North District", True),
+                ("Willow Community Clinic", "Fairhaven", "West District", True),
+                ("Summit Regional Center", "Brookfield", "Central District", True),
+                ("Harborview Clinic", "Riverton", "Coastal District", True),
+                ("Meadow General Clinic", "Clearwater", "South District", False),
             ]
             
-            for name, city, state, network in hospitals:
+            for name, city, state, network in care_providers:
                 await session.execute(
                     text("""
-                        INSERT INTO hospitals (hospital_name, city, state, is_network_hospital)
+                        INSERT INTO care_providers (provider_label, city, state, is_participating)
                         VALUES (:name, :city, :state, :network)
                         ON CONFLICT DO NOTHING
                     """),
                     {"name": name, "city": city, "state": state, "network": network}
                 )
             await session.commit()
-            print(f"   Seeded {len(hospitals)} hospitals")
+            print(f"   Seeded {len(care_providers)} care_providers")
             
-            # 3. Seed policies
-            print("\n3. Seeding policies...")
-            policies = generate_sample_policies(3)
-            policy_ids = []
+            # 3. Seed benefit_contracts
+            print("\n3. Seeding benefit_contracts...")
+            benefit_contracts = generate_sample_benefit_contracts(3)
+            contract_ids = []
             
-            for policy in policies:
+            for contract in benefit_contracts:
                 result = await session.execute(
                     text("""
-                        INSERT INTO policies (policy_number, policy_name, product_type, insured_name, 
-                                            policy_start_date, policy_end_date, total_lives, 
-                                            total_sum_insured, premium_amount)
-                        VALUES (:policy_number, :policy_name, :product_type, :insured_name,
-                                :start_date, :end_date, :lives, :sum_insured, :premium)
+                        INSERT INTO benefit_contracts (contract_ref, contract_title, plan_category, sponsor_label,
+                                            effective_from, effective_until, participant_count,
+                                            aggregate_benefit_cap, contribution_amount)
+                        VALUES (:contract_ref, :contract_title, :plan_category, :sponsor_label,
+                                :effective_from, :effective_until, :participant_count,
+                                :aggregate_benefit_cap, :contribution_amount)
                         RETURNING id
                     """),
                     {
-                        "policy_number": policy["policy_number"],
-                        "policy_name": policy["policy_name"],
-                        "product_type": policy["product_type"],
-                        "insured_name": policy["insured_name"],
-                        "start_date": policy["policy_start_date"],
-                        "end_date": policy["policy_end_date"],
-                        "lives": policy["total_lives"],
-                        "sum_insured": policy["total_sum_insured"],
-                        "premium": policy["premium_amount"]
+                        "contract_ref": contract["contract_ref"],
+                        "contract_title": contract["contract_title"],
+                        "plan_category": contract["plan_category"],
+                        "sponsor_label": contract["sponsor_label"],
+                        "effective_from": contract["effective_from"],
+                        "effective_until": contract["effective_until"],
+                        "participant_count": contract["participant_count"],
+                        "aggregate_benefit_cap": contract["aggregate_benefit_cap"],
+                        "contribution_amount": contract["contribution_amount"]
                     }
                 )
-                policy_id = result.scalar()
-                policy_ids.append(policy_id)
+                contract_id = result.scalar()
+                contract_ids.append(contract_id)
             
             await session.commit()
-            print(f"   Seeded {len(policies)} policies")
+            print(f"   Seeded {len(benefit_contracts)} benefit_contracts")
             
-            # 4. Seed policy chunks with embeddings
-            print("\n4. Seeding policy chunks with embeddings...")
+            # 4. Seed contract passages with embeddings
+            print("\n4. Seeding contract passages with embeddings...")
             embedding_service = EmbeddingService()
             total_chunks = 0
             
-            for i, policy in enumerate(policies):
-                policy_id = policy_ids[i]
-                chunks = await chunk_text(policy["document_text"])
+            for i, contract in enumerate(benefit_contracts):
+                contract_id = contract_ids[i]
+                chunks = await chunk_text(contract["source_text"])
                 
                 # Get embeddings
                 chunk_texts = [c["content"] for c in chunks]
@@ -142,15 +143,15 @@ async def seed_database():
                     for chunk, embedding in zip(chunks, embeddings):
                         await session.execute(
                             text("""
-                                INSERT INTO policy_chunks (policy_id, content, chunk_index, char_start, char_end, embedding)
-                                VALUES (:policy_id, :content, :idx, :start, :end, :embedding)
+                                INSERT INTO contract_passages (contract_id, content, passage_order, source_offset_start, source_offset_end, embedding)
+                                VALUES (:contract_id, :content, :idx, :start, :end, :embedding)
                             """),
                             {
-                                "policy_id": policy_id,
+                                "contract_id": contract_id,
                                 "content": chunk["content"],
-                                "idx": chunk["chunk_index"],
-                                "start": chunk["char_start"],
-                                "end": chunk["char_end"],
+                                "idx": chunk["passage_order"],
+                                "start": chunk["source_offset_start"],
+                                "end": chunk["source_offset_end"],
                                 "embedding": str(embedding)
                             }
                         )
@@ -160,78 +161,78 @@ async def seed_database():
                     print("   Skipping embedding generation (requires OPENAI_API_KEY)")
             
             await session.commit()
-            print(f"   Seeded {total_chunks} policy chunks")
+            print(f"   Seeded {total_chunks} contract passages")
             
-            # 5. Seed members
-            print("\n5. Seeding members...")
-            all_member_ids = []
+            # 5. Seed participants
+            print("\n5. Seeding participants...")
+            all_participant_ids = []
             
-            for policy_id in policy_ids:
-                members = generate_members(policy_id, 15)
+            for contract_id in contract_ids:
+                participants = generate_participants(contract_id, 15)
                 
-                for member in members:
+                for participant in participants:
                     result = await session.execute(
                         text("""
-                            INSERT INTO members (member_id, policy_id, member_name, relationship, gender,
-                                               date_of_birth, age, sum_insured, status, city, state)
-                            VALUES (:member_id, :policy_id, :name, :rel, :gender, :dob, :age, :sum, :status, :city, :state)
+                            INSERT INTO participants (participant_ref, contract_id, participant_label, enrolment_role, gender,
+                                               birth_date, age, benefit_ceiling, status, city, state)
+                            VALUES (:participant_ref, :contract_id, :name, :rel, :gender, :dob, :age, :benefit_cap, :status, :city, :state)
                             RETURNING id
                         """),
                         {
-                            "member_id": member["member_id"],
-                            "policy_id": policy_id,
-                            "name": member["member_name"],
-                            "rel": member["relationship"],
-                            "gender": member["gender"],
-                            "dob": member["date_of_birth"],
-                            "age": member["age"],
-                            "sum": member["sum_insured"],
-                            "status": member["status"],
-                            "city": member["city"],
-                            "state": member["state"]
+                            "participant_ref": participant["participant_ref"],
+                            "contract_id": contract_id,
+                            "name": participant["participant_label"],
+                            "rel": participant["enrolment_role"],
+                            "gender": participant["gender"],
+                            "dob": participant["birth_date"],
+                            "age": participant["age"],
+                            "benefit_cap": participant["benefit_ceiling"],
+                            "status": participant["status"],
+                            "city": participant["city"],
+                            "state": participant["state"]
                         }
                     )
-                    all_member_ids.append(result.scalar())
+                    all_participant_ids.append(result.scalar())
             
             await session.commit()
-            print(f"   Seeded {len(all_member_ids)} members")
+            print(f"   Seeded {len(all_participant_ids)} participants")
             
-            # 6. Seed claims
-            print("\n6. Seeding claims...")
-            total_claims = 0
+            # 6. Seed service_cases
+            print("\n6. Seeding service_cases...")
+            total_service_cases = 0
             
-            for policy_id in policy_ids:
-                # Get member IDs for this policy
+            for contract_id in contract_ids:
+                # Get participant row IDs for this contract
                 result = await session.execute(
-                    text("SELECT id FROM members WHERE policy_id = :pid"),
-                    {"pid": policy_id}
+                    text("SELECT id FROM participants WHERE contract_id = :pid"),
+                    {"pid": contract_id}
                 )
-                member_ids = [r[0] for r in result.fetchall()]
+                participant_ids = [r[0] for r in result.fetchall()]
                 
-                claims = generate_claims(policy_id, member_ids, 30)
+                service_cases = generate_service_cases(contract_id, participant_ids, 30)
                 
-                for claim in claims:
+                for service_case in service_cases:
                     await session.execute(
                         text("""
-                            INSERT INTO claims (claim_number, policy_id, member_id, claim_type, claim_category,
-                                              diagnosis_code, diagnosis_description, treatment_type,
-                                              hospital_name, hospital_city, hospital_state,
-                                              admission_date, discharge_date, claim_amount, approved_amount,
-                                              deductible_applied, copay_applied, net_payable,
-                                              claim_status, registration_date, settlement_date, rejection_reason)
-                            VALUES (:claim_number, :policy_id, :member_id, :claim_type, :claim_category,
-                                    :diagnosis_code, :diagnosis_description, :treatment_type,
-                                    :hospital_name, :hospital_city, :hospital_state,
-                                    :admission_date, :discharge_date, :claim_amount, :approved_amount,
-                                    :deductible_applied, :copay_applied, :net_payable,
-                                    :claim_status, :registration_date, :settlement_date, :rejection_reason)
+                            INSERT INTO service_cases (case_ref, contract_id, participant_id, funding_mode, care_setting,
+                                              condition_code, condition_label, service_category,
+                                              provider_label, provider_city, provider_region,
+                                              service_started_on, service_ended_on, requested_amount, eligible_amount,
+                                              fixed_share_applied, percentage_share_applied, payable_amount,
+                                              case_status, submitted_on, resolved_on, decision_reason)
+                            VALUES (:case_ref, :contract_id, :participant_id, :funding_mode, :care_setting,
+                                    :condition_code, :condition_label, :service_category,
+                                    :provider_label, :provider_city, :provider_region,
+                                    :service_started_on, :service_ended_on, :requested_amount, :eligible_amount,
+                                    :fixed_share_applied, :percentage_share_applied, :payable_amount,
+                                    :case_status, :submitted_on, :resolved_on, :decision_reason)
                         """),
-                        claim
+                        service_case
                     )
-                    total_claims += 1
+                    total_service_cases += 1
             
             await session.commit()
-            print(f"   Seeded {total_claims} claims")
+            print(f"   Seeded {total_service_cases} service_cases")
             
             # 7. Seed evaluation questions
             print("\n7. Seeding evaluation questions...")
@@ -240,7 +241,7 @@ async def seed_database():
             for q in questions:
                 await session.execute(
                     text("""
-                        INSERT INTO eval_questions (question, expected_answer, query_type, difficulty)
+                        INSERT INTO eval_questions (question, ground_truth_answer, query_type, difficulty)
                         VALUES (:question, :expected, :type, :difficulty)
                         ON CONFLICT DO NOTHING
                     """),

@@ -5,14 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
-from app.api.schemas.schemas import AskRequest, AskResponse, Citation, QueryTypeEnum
+from app.api.schemas.schemas import InsightQueryRequest, InsightQueryResponse, Citation, QueryTypeEnum
 from app.infrastructure.database.postgres import get_db_session
 from app.application.graph.orchestrator import PolicyMindGraph
 from app.domain.entities.models import QueryType
 
 logger = structlog.get_logger()
 
-router = APIRouter(prefix="/ask", tags=["Query"])
+router = APIRouter(prefix="/insights", tags=["Insights"])
 
 
 async def log_query_background(
@@ -38,14 +38,14 @@ async def log_query_background(
         logger.error("Failed to log query", error=str(e))
 
 
-@router.post("", response_model=AskResponse)
-async def ask_question(
-    request: AskRequest,
+@router.post("/query", response_model=InsightQueryResponse)
+async def create_insight(
+    request: InsightQueryRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
-    Ask a question about insurance policies or claims.
+    Ask a question about insurance benefit_contracts or service_cases.
     
     The system will automatically:
     1. Classify your query type (document Q&A, SQL, or hybrid)
@@ -54,33 +54,33 @@ async def ask_question(
     
     **Query Types:**
     - **document_qa**: Questions about policy terms, coverage, exclusions
-    - **claims_sql**: Questions about claims data, statistics, trends
+    - **records_sql**: Questions about synthetic service-case data, statistics, and trends
     - **hybrid**: Questions needing both policy context and data analysis
     
     **Examples:**
     - "What is the maternity coverage limit?" → document_qa
-    - "How many claims were rejected in 2024?" → claims_sql
+    - "How many service cases were declined in 2024?" → records_sql
     - "What's our rejection rate for pre-existing conditions and what does the policy say about them?" → hybrid
     """
     logger.info(
         "Processing query",
-        query=request.query[:100],
-        policy_id=request.policy_id
+        prompt=request.prompt[:100],
+        scope_key=request.scope_key
     )
     
     try:
         # Create the graph and invoke
         graph = PolicyMindGraph(db)
         result = await graph.invoke(
-            query=request.query,
-            policy_id=request.policy_id
+            query=request.prompt,
+            contract_id=request.scope_key
         )
         
         # Convert citations
         citations = [
             Citation(
                 source_id=c.source_id,
-                policy_name=c.policy_name,
+                contract_title=c.contract_title,
                 section=c.section,
                 page=c.page,
                 chunk_text=c.chunk_text[:500],  # Truncate for response
@@ -92,20 +92,20 @@ async def ask_question(
         # Map internal QueryType to API enum
         query_type_map = {
             QueryType.DOCUMENT_QA: QueryTypeEnum.document_qa,
-            QueryType.CLAIMS_SQL: QueryTypeEnum.claims_sql,
+            QueryType.RECORDS_SQL: QueryTypeEnum.records_sql,
             QueryType.HYBRID: QueryTypeEnum.hybrid
         }
         
         # Log query in background
         background_tasks.add_task(
             log_query_background,
-            request.query,
+            request.prompt,
             result.query_type.value,
             result.latency_ms
         )
         
-        return AskResponse(
-            query=result.query,
+        return InsightQueryResponse(
+            prompt=result.query,
             query_type=query_type_map.get(result.query_type, QueryTypeEnum.document_qa),
             answer=result.answer,
             citations=citations,
@@ -116,16 +116,16 @@ async def ask_question(
         )
         
     except Exception as e:
-        logger.error("Query failed", error=str(e), query=request.query[:100])
+        logger.error("Query failed", error=str(e), prompt=request.prompt[:100])
         raise HTTPException(
             status_code=500,
             detail=f"Failed to process query: {str(e)}"
         )
 
 
-@router.post("/classify")
+@router.post("/route-preview")
 async def classify_only(
-    request: AskRequest,
+    request: InsightQueryRequest,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -135,19 +135,19 @@ async def classify_only(
     from app.application.agents.query_classifier import QueryClassifier
     
     classifier = QueryClassifier()
-    result = await classifier.classify(request.query)
+    result = await classifier.classify(request.prompt)
     
     return {
-        "query": request.query,
+        "prompt": request.prompt,
         "query_type": result.query_type.value,
         "confidence": result.confidence,
         "reasoning": result.reasoning
     }
 
 
-@router.post("/rag")
+@router.post("/document-only")
 async def rag_only(
-    request: AskRequest,
+    request: InsightQueryRequest,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
@@ -158,15 +158,17 @@ async def rag_only(
     
     agent = RAGAgent(db)
     result = await agent.answer(
-        query=request.query,
-        policy_id=request.policy_id,
-        search_method=request.search_method
+        query=request.prompt,
+        contract_id=request.scope_key,
+        search_method={"semantic": "vector", "lexical": "bm25", "blended": "hybrid"}.get(
+            request.retrieval_strategy.value, "hybrid"
+        )
     )
     
     citations = [
         Citation(
             source_id=c.source_id,
-            policy_name=c.policy_name,
+            contract_title=c.contract_title,
             section=c.section,
             page=c.page,
             chunk_text=c.chunk_text[:500],
@@ -175,8 +177,8 @@ async def rag_only(
         for c in result.citations
     ]
     
-    return AskResponse(
-        query=result.query,
+    return InsightQueryResponse(
+        prompt=result.query,
         query_type=QueryTypeEnum.document_qa,
         answer=result.answer,
         citations=citations,
@@ -185,23 +187,23 @@ async def rag_only(
     )
 
 
-@router.post("/sql")
+@router.post("/records-only")
 async def sql_only(
-    request: AskRequest,
+    request: InsightQueryRequest,
     db: AsyncSession = Depends(get_db_session)
 ):
     """
     Force SQL agent execution (skip classification).
-    Useful for testing claims queries specifically.
+    Useful for testing service_cases queries specifically.
     """
     from app.application.agents.sql_agent import SQLAgent
     
     agent = SQLAgent(db)
-    result = await agent.answer(request.query)
+    result = await agent.answer(request.prompt)
     
-    return AskResponse(
-        query=result.query,
-        query_type=QueryTypeEnum.claims_sql,
+    return InsightQueryResponse(
+        prompt=result.query,
+        query_type=QueryTypeEnum.records_sql,
         answer=result.answer,
         citations=[],
         sql_query=result.sql_query,

@@ -20,7 +20,7 @@ class GraphState(TypedDict):
     """State that flows through the graph."""
     # Input
     query: str
-    policy_id: Optional[int]
+    contract_id: Optional[int]
     
     # Classification
     classification: Optional[ClassificationResult]
@@ -120,7 +120,7 @@ class PolicyMindGraph:
         """Route to appropriate agent based on classification."""
         query_type = state.get("query_type", QueryType.DOCUMENT_QA)
         
-        if query_type == QueryType.CLAIMS_SQL:
+        if query_type == QueryType.RECORDS_SQL:
             return "sql"
         elif query_type == QueryType.HYBRID:
             return "hybrid"
@@ -132,7 +132,7 @@ class PolicyMindGraph:
         try:
             result = await self.rag_agent.answer(
                 query=state["query"],
-                policy_id=state.get("policy_id")
+                contract_id=state.get("contract_id")
             )
             return {
                 "result": result,
@@ -146,7 +146,7 @@ class PolicyMindGraph:
             }
     
     async def _sql_node(self, state: GraphState) -> dict:
-        """SQL node - executes claims data queries."""
+        """SQL node - executes service_cases data queries."""
         try:
             result = await self.sql_agent.answer(state["query"])
             return {
@@ -165,7 +165,7 @@ class PolicyMindGraph:
         try:
             result = await self.hybrid_agent.answer(
                 query=state["query"],
-                policy_id=state.get("policy_id")
+                contract_id=state.get("contract_id")
             )
             return {
                 "result": result,
@@ -181,14 +181,14 @@ class PolicyMindGraph:
     async def invoke(
         self,
         query: str,
-        policy_id: Optional[int] = None
+        contract_id: Optional[int] = None
     ) -> QueryResult:
         """
         Execute the graph with the given query.
         """
         initial_state: GraphState = {
             "query": query,
-            "policy_id": policy_id,
+            "contract_id": contract_id,
             "classification": None,
             "query_type": None,
             "result": None,
@@ -217,14 +217,14 @@ class PolicyMindGraph:
     async def stream(
         self,
         query: str,
-        policy_id: Optional[int] = None
+        contract_id: Optional[int] = None
     ):
         """
         Stream the graph execution (for real-time updates).
         """
         initial_state: GraphState = {
             "query": query,
-            "policy_id": policy_id,
+            "contract_id": contract_id,
             "classification": None,
             "query_type": None,
             "result": None,

@@ -31,9 +31,9 @@ class CitationBuilder:
             
             citation = Citation(
                 source_id=i,
-                policy_name=f"Policy-{chunk.policy_id}",
-                section=chunk.section_name,
-                page=chunk.page_number,
+                contract_title=f"Policy-{chunk.contract_id}",
+                section=chunk.topic_title,
+                page=chunk.source_page,
                 chunk_text=snippet,
                 relevance_score=chunk.score or 0.0
             )
@@ -68,7 +68,7 @@ class CitationBuilder:
         """
         return [
             {
-                "source": f"{citation.policy_name}",
+                "source": f"{citation.contract_title}",
                 "section": citation.section or "General",
                 "page": citation.page,
                 "snippet": citation.chunk_text,
@@ -92,7 +92,7 @@ class CitationBuilder:
         
         sources_section = "\n\n**Sources:**"
         for i, citation in enumerate(citations, 1):
-            source_line = f"\n[{i}] {citation.policy_name}"
+            source_line = f"\n[{i}] {citation.contract_title}"
             if citation.section:
                 source_line += f", {citation.section}"
             if citation.page:

@@ -11,24 +11,24 @@ from typing import List, Optional
 class QueryType(str, Enum):
     """Types of queries the system can handle."""
     DOCUMENT_QA = "document_qa"
-    CLAIMS_SQL = "claims_sql"
+    RECORDS_SQL = "records_sql"
     HYBRID = "hybrid"
     UNKNOWN = "unknown"
 
 
-class ClaimStatus(str, Enum):
+class CaseStatus(str, Enum):
     """Claim processing status."""
-    REGISTERED = "REGISTERED"
-    UNDER_PROCESS = "UNDER_PROCESS"
-    APPROVED = "APPROVED"
-    SETTLED = "SETTLED"
-    REJECTED = "REJECTED"
+    OPENED = "OPENED"
+    IN_REVIEW = "IN_REVIEW"
+    ELIGIBLE = "ELIGIBLE"
+    RESOLVED = "RESOLVED"
+    DECLINED = "DECLINED"
 
 
-class ClaimType(str, Enum):
-    """Type of claim."""
-    CASHLESS = "CASHLESS"
-    REIMBURSEMENT = "REIMBURSEMENT"
+class FundingMode(str, Enum):
+    """Funding mode for a service case."""
+    DIRECT_BILLING = "DIRECT_BILLING"
+    MEMBER_PAID = "MEMBER_PAID"
 
 
 class SectionType(str, Enum):
@@ -46,29 +46,29 @@ class SectionType(str, Enum):
 
 
 @dataclass
-class PolicyDocument:
+class BenefitContract:
     """Represents a policy document."""
     id: int
-    policy_number: str
-    policy_name: Optional[str] = None
-    product_type: str = "GROUP_HEALTH"
-    insured_name: Optional[str] = None
-    policy_start_date: Optional[date] = None
-    policy_end_date: Optional[date] = None
-    total_lives: Optional[int] = None
-    total_sum_insured: Optional[Decimal] = None
+    contract_ref: str
+    contract_title: Optional[str] = None
+    plan_category: str = "EMPLOYEE_BENEFITS"
+    sponsor_label: Optional[str] = None
+    effective_from: Optional[date] = None
+    effective_until: Optional[date] = None
+    participant_count: Optional[int] = None
+    aggregate_benefit_cap: Optional[Decimal] = None
 
 
 @dataclass
 class DocumentChunk:
     """A chunk of policy document with embedding."""
     id: int
-    policy_id: int
+    contract_id: int
     content: str
-    section_type: Optional[SectionType] = None
-    section_name: Optional[str] = None
-    page_number: Optional[int] = None
-    chunk_index: Optional[int] = None
+    topic_category: Optional[SectionType] = None
+    topic_title: Optional[str] = None
+    source_page: Optional[int] = None
+    passage_order: Optional[int] = None
     token_count: Optional[int] = None
     embedding: Optional[List[float]] = None
     score: Optional[float] = None  # Similarity score when retrieved
@@ -78,7 +78,7 @@ class DocumentChunk:
 class Citation:
     """Citation information for an answer."""
     source_id: int
-    policy_name: str
+    contract_title: str
     section: Optional[str] = None
     page: Optional[int] = None
     chunk_text: str = ""
@@ -119,23 +119,23 @@ class ClassificationResult:
 @dataclass
 class CoverageInfo:
     """Coverage calculation result."""
-    coverage_name: str
+    benefit_title: str
     is_covered: bool
-    coverage_limit: Optional[Decimal] = None
+    benefit_cap: Optional[Decimal] = None
     deductible: Optional[Decimal] = None
-    copay_percentage: Optional[Decimal] = None
-    waiting_period_days: Optional[int] = None
+    percentage_share: Optional[Decimal] = None
+    eligibility_delay_days: Optional[int] = None
     sub_limit: Optional[str] = None
     exclusions: Optional[List[str]] = None
     notes: Optional[str] = None
 
 
 @dataclass
-class ClaimSummary:
-    """Summary of claims for SQL queries."""
-    total_claims: int
-    total_amount: Decimal
-    approved_amount: Decimal
-    average_claim: Decimal
+class CaseSummary:
+    """Summary of synthetic service cases for SQL queries."""
+    case_count: int
+    requested_total: Decimal
+    eligible_amount: Decimal
+    average_requested: Decimal
     by_status: dict = field(default_factory=dict)
     by_category: dict = field(default_factory=dict)

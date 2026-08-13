@@ -5,6 +5,9 @@ import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.config import settings
 from app.infrastructure.database.postgres import init_db, close_db
@@ -29,6 +32,7 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
+limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -76,9 +80,9 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
-app.include_router(ingest.router, prefix="/api/v1", tags=["Ingestion"])
-app.include_router(ask.router, prefix="/api/v1", tags=["Query"])
-app.include_router(eval_route.router, prefix="/api/v1", tags=["Evaluation"])
+app.include_router(ingest.router, prefix="/api/v2", tags=["Knowledge"])
+app.include_router(ask.router, prefix="/api/v2", tags=["Insights"])
+app.include_router(eval_route.router, prefix="/api/v2", tags=["Evaluation"])
 
 
 @app.get("/")
