@@ -45,7 +45,9 @@ class ConversationMessage(BaseModel):
 class InsightQueryRequest(BaseModel):
     """Public request contract for the insight query endpoint."""
 
-    prompt: str = Field(..., min_length=1, max_length=1000, description="Message or question to answer")
+    prompt: str = Field(
+        ..., min_length=1, max_length=1000, description="Message or question to answer"
+    )
     scope_key: Optional[int] = Field(None, description="Optional synthetic knowledge-scope key")
     retrieval_strategy: RetrievalStrategyEnum = Field(
         RetrievalStrategyEnum.blended,

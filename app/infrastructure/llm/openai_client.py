@@ -254,9 +254,7 @@ Answer:"""
 
         return cast(
             str,
-            await self.generate(
-                prompt=prompt, system_prompt=system_prompt, temperature=0.2
-            ),
+            await self.generate(prompt=prompt, system_prompt=system_prompt, temperature=0.2),
         )
 
     async def generate_json(

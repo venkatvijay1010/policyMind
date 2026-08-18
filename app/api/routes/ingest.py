@@ -162,12 +162,16 @@ async def _source_request_from_upload(
             ) from exc
         except Exception as exc:
             logger.warning("Failed to extract PDF text", filename=filename, error=str(exc))
-            raise HTTPException(status_code=422, detail="Unable to extract text from this PDF") from exc
+            raise HTTPException(
+                status_code=422, detail="Unable to extract text from this PDF"
+            ) from exc
     else:
         raise HTTPException(status_code=400, detail="Unsupported file type. Use .txt, .md, or .pdf")
 
     if not text_content.strip():
-        raise HTTPException(status_code=422, detail="The uploaded document does not contain readable text")
+        raise HTTPException(
+            status_code=422, detail="The uploaded document does not contain readable text"
+        )
 
     _ensure_source_size(text_content)
     return KnowledgeSourceRequest(

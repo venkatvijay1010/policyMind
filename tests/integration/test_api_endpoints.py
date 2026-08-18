@@ -109,7 +109,9 @@ class TestAskEndpoints:
                         model_used="qwen2.5:3b",
                     )
                 )
-                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
                     response = await client.post(
                         "/api/v2/insights/query",
                         json={"prompt": "hi"},

@@ -195,7 +195,9 @@ async def seed_database():
                         total_chunks += 1
                 except Exception as e:
                     print(f"   Warning: Could not generate embeddings: {e}")
-                    print("   Skipping embedding generation (start Ollama and pull the embedding model)")
+                    print(
+                        "   Skipping embedding generation (start Ollama and pull the embedding model)"
+                    )
 
             await session.commit()
             print(f"   Seeded {total_chunks} contract passages")

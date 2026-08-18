@@ -55,6 +55,7 @@ if database_backend == "sqlite":
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
+
 # Create async session factory
 async_session_factory = async_sessionmaker(
     engine,

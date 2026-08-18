@@ -39,10 +39,7 @@ def _search_method(retrieval_strategy: str) -> str:
 
 def _conversation_turns(insight_request: InsightQueryRequest) -> list[dict[str, str]]:
     """Convert validated API conversation turns into the graph's small payload shape."""
-    return [
-        {"role": turn.role, "content": turn.content}
-        for turn in insight_request.conversation
-    ]
+    return [{"role": turn.role, "content": turn.content} for turn in insight_request.conversation]
 
 
 def _route_status(query_type: QueryType) -> tuple[str, str]:
@@ -134,15 +131,15 @@ async def _stream_insight(
 
         response = _to_insight_response(result)
         asyncio.create_task(
-            log_query_background(
-                insight_request.prompt, result.query_type.value, result.latency_ms
-            )
+            log_query_background(insight_request.prompt, result.query_type.value, result.latency_ms)
         )
         yield _sse("result", response.model_dump(mode="json"))
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.exception("Streaming query failed", error=str(exc), prompt=insight_request.prompt[:100])
+        logger.exception(
+            "Streaming query failed", error=str(exc), prompt=insight_request.prompt[:100]
+        )
         yield _sse("error", {"detail": "Unable to process that question locally."})
 
 
@@ -252,9 +249,7 @@ async def classify_only(
     from app.application.agents.query_classifier import QueryClassifier
 
     classifier = QueryClassifier()
-    result = await classifier.classify(
-        insight_request.prompt, _conversation_turns(insight_request)
-    )
+    result = await classifier.classify(insight_request.prompt, _conversation_turns(insight_request))
 
     return {
         "prompt": insight_request.prompt,
