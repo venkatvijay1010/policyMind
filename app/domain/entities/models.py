@@ -1,8 +1,9 @@
 """
 Domain entities for PolicyMind.
 """
+
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
@@ -10,6 +11,8 @@ from typing import List, Optional
 
 class QueryType(str, Enum):
     """Types of queries the system can handle."""
+
+    CHAT = "chat"
     DOCUMENT_QA = "document_qa"
     RECORDS_SQL = "records_sql"
     HYBRID = "hybrid"
@@ -18,6 +21,7 @@ class QueryType(str, Enum):
 
 class CaseStatus(str, Enum):
     """Claim processing status."""
+
     OPENED = "OPENED"
     IN_REVIEW = "IN_REVIEW"
     ELIGIBLE = "ELIGIBLE"
@@ -27,12 +31,14 @@ class CaseStatus(str, Enum):
 
 class FundingMode(str, Enum):
     """Funding mode for a service case."""
+
     DIRECT_BILLING = "DIRECT_BILLING"
     MEMBER_PAID = "MEMBER_PAID"
 
 
 class SectionType(str, Enum):
     """Types of policy document sections."""
+
     COVERAGE = "COVERAGE"
     EXCLUSION = "EXCLUSION"
     LIMIT = "LIMIT"
@@ -48,6 +54,7 @@ class SectionType(str, Enum):
 @dataclass
 class BenefitContract:
     """Represents a policy document."""
+
     id: int
     contract_ref: str
     contract_title: Optional[str] = None
@@ -62,9 +69,11 @@ class BenefitContract:
 @dataclass
 class DocumentChunk:
     """A chunk of policy document with embedding."""
+
     id: int
     contract_id: int
     content: str
+    contract_title: Optional[str] = None
     topic_category: Optional[SectionType] = None
     topic_title: Optional[str] = None
     source_page: Optional[int] = None
@@ -77,6 +86,7 @@ class DocumentChunk:
 @dataclass
 class Citation:
     """Citation information for an answer."""
+
     source_id: int
     contract_title: str
     section: Optional[str] = None
@@ -88,6 +98,7 @@ class Citation:
 @dataclass
 class QueryResult:
     """Result of a query to the RAG system."""
+
     query: str
     query_type: QueryType
     answer: str
@@ -103,6 +114,7 @@ class QueryResult:
 @dataclass
 class RetrievalResult:
     """Result of document retrieval."""
+
     chunks: List[DocumentChunk]
     query_embedding: Optional[List[float]] = None
     search_method: str = "vector"  # vector, bm25, hybrid
@@ -111,6 +123,7 @@ class RetrievalResult:
 @dataclass
 class ClassificationResult:
     """Result of query classification."""
+
     query_type: QueryType
     confidence: float
     reasoning: Optional[str] = None
@@ -119,6 +132,7 @@ class ClassificationResult:
 @dataclass
 class CoverageInfo:
     """Coverage calculation result."""
+
     benefit_title: str
     is_covered: bool
     benefit_cap: Optional[Decimal] = None
@@ -133,6 +147,7 @@ class CoverageInfo:
 @dataclass
 class CaseSummary:
     """Summary of synthetic service cases for SQL queries."""
+
     case_count: int
     requested_total: Decimal
     eligible_amount: Decimal

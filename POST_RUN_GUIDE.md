@@ -149,7 +149,7 @@ Retry on Error (max 2) → GPT-4 Explain Results → Response
 
 **Hybrid:**
 ```
-Query → Extract Sub-queries → Parallel Execute (RAG + SQL) → 
+Query → Extract Sub-queries → Execute RAG then SQL →
 GPT-4 Synthesize → Combined Response
 ```
 
@@ -417,7 +417,7 @@ curl -X POST http://localhost:8000/api/v2/insights/query \
 2. Routes to Hybrid agent
 3. Hybrid agent:
    - Extracts sub-queries using GPT-4
-   - Parallel execution:
+   - Sequential execution using the same request-scoped session:
      - RAG: searches for "pre-existing waiting period"
      - SQL: queries rejection statistics
    - Synthesizes combined answer using GPT-4
@@ -745,7 +745,7 @@ curl http://localhost:8000/api/v2/eval/run/abc123-...
 | `422 Validation Error` | Invalid request body | Check request format in Swagger |
 | `404 Not Found` | Wrong endpoint | Check endpoint URL |
 | `503 Service Unavailable` | DB not ready | Wait for DB health check |
-| `429 Too Many Requests` | Rate limited | Wait 1 minute (100 req/min limit) |
+| `429 Too Many Requests` | Rate limited | Wait until the configured per-client limit resets (default: 60/minute) |
 
 ### 9.3 OpenAI Errors
 
@@ -887,7 +887,7 @@ echo "All checks complete!"
    
    **Explain:**
    - "Hybrid agent breaks this into sub-queries"
-   - "Runs RAG and SQL in parallel"
+   - "Runs RAG and SQL sequentially, then synthesizes a unified response"
    - "Synthesizes a unified response"
 
 #### Part 5: Architecture Highlight (2 min)

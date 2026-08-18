@@ -22,25 +22,16 @@ dependencies = [
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.6.0",
     "pydantic-settings>=2.1.0",
-    "python-dotenv>=1.0.0",
     "python-multipart>=0.0.6",
+    "pypdf>=5.0.0",
     
     # Database
     "sqlalchemy>=2.0.25",
-    "asyncpg>=0.29.0",
-    "pgvector>=0.2.4",
-    "alembic>=1.13.0",
+    "aiosqlite>=0.20.0",
     
     # AI/LLM
     "openai>=1.10.0",
-    "langchain>=0.1.0",
-    "langchain-openai>=0.0.5",
     "langgraph>=0.0.20",
-    "langsmith>=0.0.87",
-    
-    # Document Processing
-    "pypdf2>=3.0.1",
-    "tiktoken>=0.5.2",
     
     # Search
     "rank-bm25>=0.2.2",
@@ -50,7 +41,6 @@ dependencies = [
     "tenacity>=8.2.3",
     "structlog>=24.1.0",
     "slowapi>=0.1.9",
-    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]
@@ -61,7 +51,6 @@ dev = [
     "black>=24.1.0",
     "ruff>=0.1.14",
     "mypy>=1.8.0",
-    "httpx>=0.26.0",
 ]
 
 eval = [
@@ -86,7 +75,18 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "slow: marks slow tests",
+    "integration: marks integration tests",
+    "unit: marks unit tests",
+]

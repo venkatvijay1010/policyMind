@@ -11,13 +11,14 @@ An intelligent question-answering system that combines Retrieval-Augmented Gener
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)
 ![LangGraph](https://img.shields.io/badge/LangGraph-0.1+-purple.svg)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)
+![SQLite](https://img.shields.io/badge/SQLite-local-blue.svg)
+![Ollama](https://img.shields.io/badge/Ollama-local-green.svg)
 
 ## 🎯 Overview
 
 PolicyMind is an AI-powered assistant that helps users understand insurance benefit_contracts and analyze service_cases data. It uses:
 
-- **Hybrid Search**: Combines vector similarity (pgvector) with BM25 for optimal retrieval
+- **Hybrid Search**: Combines local cosine similarity with BM25 for document retrieval
 - **Query Classification**: Automatically routes queries to the right agent
 - **LangGraph Orchestration**: State machine-based agent coordination
 - **Self-Correcting SQL**: Generates and validates SQL queries for service_cases analysis
@@ -60,8 +61,7 @@ PolicyMind is an AI-powered assistant that helps users understand insurance bene
 ### Prerequisites
 
 - Python 3.11+
-- Docker & Docker Compose
-- OpenAI API key
+- [Ollama](https://ollama.com/) running locally
 
 ### Setup
 
@@ -70,23 +70,32 @@ PolicyMind is an AI-powered assistant that helps users understand insurance bene
    cd policymind
    ```
 
-2. **Create environment file**
+2. **Pull the local models**
    ```bash
-   cp .env.example .env
-   # Edit .env and add your OPENAI_API_KEY
+   ollama pull qwen2.5:7b
+   ollama pull nomic-embed-text
    ```
 
-3. **Start with Docker Compose**
+3. **Create environment file**
    ```bash
-   docker-compose up -d
+   # Windows PowerShell
+   Copy-Item .env.example .env.local
+   # macOS/Linux
+   cp .env.example .env.local
+   ```
+   `.env.local` overrides any legacy values in `.env`, so you do not need to
+   delete an old OpenAI key or PostgreSQL configuration.
+
+4. **Seed the local SQLite database**
+   ```bash
+   python -m data.seed.seed_database
    ```
 
-4. **Seed the database (optional)**
+5. **Run the application and open the chat UI**
    ```bash
-   docker-compose exec app python data/seed/seed_database.py
+   uvicorn app.main:app --reload
    ```
-
-5. **Access the API**
+   - Chat UI: http://localhost:8000
    - Swagger UI: http://localhost:8000/docs
    - ReDoc: http://localhost:8000/redoc
 
@@ -101,11 +110,26 @@ source venv/bin/activate  # Linux/Mac
 # Install dependencies
 pip install -e ".[dev]"
 
-# Start PostgreSQL (with pgvector)
-docker-compose up -d db
+# Pull local models once
+ollama pull qwen2.5:7b
+ollama pull nomic-embed-text
 
-# Run the application
+# Copy local settings and create the SQLite database
+Copy-Item .env.example .env.local  # Windows PowerShell
+python -m data.seed.seed_database
+
+# Run the application; SQLite is created in data/policymind.db
 uvicorn app.main:app --reload
+```
+
+### Optional Docker run
+
+Run Ollama on your host machine first, then start the app container. Docker
+Desktop resolves `host.docker.internal` to the host Ollama service.
+
+```bash
+docker compose up --build
+docker compose exec app python -m data.seed.seed_database
 ```
 
 ## 📖 API Endpoints
@@ -189,10 +213,11 @@ policymind/
 │   │   ├── entities/         # Domain models
 │   │   └── services/         # Business logic
 │   ├── infrastructure/
-│   │   ├── database/         # PostgreSQL + pgvector
-│   │   ├── llm/              # OpenAI client + embeddings
-│   │   └── search/           # Hybrid search
+│   │   ├── database/         # SQLite + SQLAlchemy
+│   │   ├── llm/              # Ollama-compatible chat + embeddings
+│   │   └── search/           # Local cosine + BM25 search
 │   ├── evaluation/           # Evaluation metrics
+│   ├── web/                  # Browser chat UI (HTML/CSS/JS)
 │   ├── config.py             # Settings
 │   └── main.py               # FastAPI app
 ├── data/
@@ -231,12 +256,21 @@ Environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key | Required |
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql+asyncpg://...` |
-| `CHAT_MODEL` | OpenAI chat model | `gpt-4-turbo-preview` |
-| `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-small` |
+| `LLM_PROVIDER` | `ollama` by default; `openai` remains optional | `ollama` |
+| `LLM_BASE_URL` | OpenAI-compatible LLM endpoint | `http://localhost:11434/v1` |
+| `LLM_API_KEY` | Ignored by Ollama; required by the compatibility client | `ollama` |
+| `DATABASE_URL` | Local SQLite database connection | `sqlite+aiosqlite:///./data/policymind.db` |
+| `CHAT_MODEL` | Local Ollama chat model | `qwen2.5:7b` |
+| `EMBEDDING_MODEL` | Local Ollama embedding model | `nomic-embed-text` |
+| `EMBEDDING_DIMENSION` | Dimension produced by the embedding model | `768` |
 | `APP_ENV` | Environment (development/production) | `development` |
+| `APP_DEBUG` | Enables SQLAlchemy debug logging | `false` |
 | `LOG_LEVEL` | Logging level | `INFO` |
+| `RATE_LIMIT` | Per-client request limit | `60/minute` |
+| `RATE_LIMIT_STORAGE_URI` | Shared rate-limit backend URI; use Redis with multiple API replicas | `memory://` |
+| `SOURCE_INGEST_ALLOWED_HOSTS` | Comma-separated HTTPS hosts allowed for URL ingestion | Disabled by default |
+
+URL ingestion is intentionally disabled until `SOURCE_INGEST_ALLOWED_HOSTS` is configured. Text and Markdown file uploads remain available, with a 10 MB default size limit.
 
 ## 📊 Evaluation
 
@@ -266,7 +300,7 @@ Metrics tracked:
    - Keyword-based fast path + LLM fallback
 
 2. **Hybrid Search**
-   - Vector similarity using pgvector (HNSW index)
+   - Local cosine similarity over SQLite JSON embeddings
    - BM25 for keyword matching
    - Reciprocal Rank Fusion (RRF) combining both
 
@@ -315,4 +349,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-Built with ❤️ using FastAPI, LangGraph, and OpenAI
+Built with ❤️ using FastAPI, LangGraph, SQLite, and Ollama

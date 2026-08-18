@@ -94,6 +94,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.local
 .venv
 env/
 venv/
@@ -134,3 +135,6 @@ Thumbs.db
 *.log
 logs/
 data/documents/
+data/*.db
+data/*.db-shm
+data/*.db-wal

@@ -1,14 +1,17 @@
 """
 Health check endpoints.
 """
-import time
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
 
-from app.api.schemas.schemas import HealthStatus, DetailedHealth
-from app.infrastructure.database.postgres import get_db_session
+import time
+from typing import TypedDict
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.schemas.schemas import DetailedHealth, HealthStatus
 from app.config import settings
+from app.infrastructure.database.postgres import get_db_session
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -16,13 +19,30 @@ router = APIRouter(prefix="/health", tags=["Health"])
 START_TIME = time.time()
 
 
+class ComponentHealth(TypedDict, total=False):
+    """Runtime status details for an application component."""
+
+    status: str
+    policy_count: int | None
+    chunk_count: int | None
+    error: str
+    chat_model: str
+    embedding_model: str
+    provider: str
+
+
+class HealthMetrics(TypedDict):
+    """Metrics reported by the detailed health endpoint."""
+
+    uptime_seconds: float
+    environment: str
+
+
 @router.get("", response_model=HealthStatus)
-async def health_check(
-    db: AsyncSession = Depends(get_db_session)
-):
+async def health_check(db: AsyncSession = Depends(get_db_session)) -> HealthStatus:
     """
     Basic health check endpoint.
-    
+
     Returns status of all critical components.
     """
     # Check database
@@ -31,90 +51,76 @@ async def health_check(
         await db.execute(text("SELECT 1"))
     except Exception:
         db_status = "disconnected"
-    
-    # Check LLM (simplified - just check if API key exists)
-    llm_status = "available" if settings.openai_api_key else "not_configured"
-    
+
+    # Ollama is locally addressed and does not use a real API key. This endpoint
+    # reports connection configuration; the first request validates model access.
+    llm_status = "available" if settings.is_llm_configured else "not_configured"
+
     uptime = time.time() - START_TIME
-    
-    overall_status = "healthy" if db_status == "connected" and llm_status == "available" else "degraded"
-    
+
+    overall_status = (
+        "healthy" if db_status == "connected" and llm_status == "available" else "degraded"
+    )
+
     return HealthStatus(
         status=overall_status,
         version=settings.app_version,
         database=db_status,
         llm=llm_status,
-        uptime_seconds=round(uptime, 2)
+        uptime_seconds=round(uptime, 2),
     )
 
 
 @router.get("/detailed", response_model=DetailedHealth)
-async def detailed_health(
-    db: AsyncSession = Depends(get_db_session)
-):
+async def detailed_health(db: AsyncSession = Depends(get_db_session)) -> DetailedHealth:
     """
     Detailed health check with component status and metrics.
     """
-    components = {}
-    metrics = {}
-    
+    components: dict[str, ComponentHealth] = {}
+
     # Database check
     try:
         result = await db.execute(text("SELECT COUNT(*) FROM benefit_contracts"))
         policy_count = result.scalar()
-        components["database"] = {
-            "status": "healthy",
-            "policy_count": policy_count
-        }
+        components["database"] = {"status": "healthy", "policy_count": policy_count}
     except Exception as e:
-        components["database"] = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
-    
+        components["database"] = {"status": "unhealthy", "error": str(e)}
+
     # Vector store check
     try:
         result = await db.execute(text("SELECT COUNT(*) FROM contract_passages"))
         chunk_count = result.scalar()
-        components["vector_store"] = {
-            "status": "healthy",
-            "chunk_count": chunk_count
-        }
+        components["vector_store"] = {"status": "healthy", "chunk_count": chunk_count}
     except Exception as e:
-        components["vector_store"] = {
-            "status": "unhealthy",
-            "error": str(e)
-        }
-    
+        components["vector_store"] = {"status": "unhealthy", "error": str(e)}
+
     # LLM check
     components["llm"] = {
-        "status": "configured" if settings.openai_api_key else "not_configured",
+        "status": "configured" if settings.is_llm_configured else "not_configured",
+        "provider": settings.llm_provider,
         "chat_model": settings.chat_model,
-        "embedding_model": settings.embedding_model
+        "embedding_model": settings.embedding_model,
     }
-    
+
     # Metrics
-    metrics["uptime_seconds"] = round(time.time() - START_TIME, 2)
-    metrics["environment"] = settings.environment
-    
+    metrics: HealthMetrics = {
+        "uptime_seconds": round(time.time() - START_TIME, 2),
+        "environment": settings.environment,
+    }
+
     overall_status = "healthy"
     for comp in components.values():
         if comp.get("status") not in ["healthy", "configured"]:
             overall_status = "degraded"
             break
-    
+
     return DetailedHealth(
-        status=overall_status,
-        version=settings.app_version,
-        components=components,
-        metrics=metrics
+        status=overall_status, version=settings.app_version, components=components, metrics=metrics
     )
 
 
 @router.get("/ready")
-async def readiness_check(
-    db: AsyncSession = Depends(get_db_session)
-):
+async def readiness_check(db: AsyncSession = Depends(get_db_session)) -> dict[str, bool]:
     """
     Kubernetes readiness probe.
     Returns 200 only when service is ready to accept traffic.
@@ -124,11 +130,12 @@ async def readiness_check(
         return {"ready": True}
     except Exception:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=503, detail="Service not ready")
 
 
 @router.get("/live")
-async def liveness_check():
+async def liveness_check() -> dict[str, bool]:
     """
     Kubernetes liveness probe.
     Returns 200 if the process is running.

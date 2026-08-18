@@ -1,7 +1,9 @@
 """
 Database seeding script - populate database with sample data.
 """
+
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -9,27 +11,39 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from sqlalchemy import text
+
 from app.infrastructure.database.postgres import async_session_factory, init_db
 from app.infrastructure.llm.embeddings import EmbeddingService
-from data.generators.policy_generator import generate_sample_benefit_contracts, generate_contract_document
-from data.generators.service_cases_generator import generate_participants, generate_service_cases
 from data.generators.eval_generator import generate_eval_questions
+from data.generators.policy_generator import (
+    generate_sample_benefit_contracts,
+)
+from data.generators.service_cases_generator import generate_participants, generate_service_cases
 
 
-async def chunk_text(content: str, chunk_size: int = 1000, overlap: int = 200):
+def chunk_text(
+    content: str, chunk_size: int = 1000, overlap: int = 200
+) -> list[dict[str, int | str]]:
     """Simple text chunking."""
+    if chunk_size <= 0 or not 0 <= overlap < chunk_size:
+        raise ValueError("overlap must be non-negative and smaller than chunk_size")
+
     chunks = []
     start = 0
     while start < len(content):
-        end = start + chunk_size
+        end = min(start + chunk_size, len(content))
         chunk = content[start:end]
         if chunk.strip():
-            chunks.append({
-                "content": chunk.strip(),
-                "passage_order": len(chunks),
-                "source_offset_start": start,
-                "source_offset_end": end
-            })
+            chunks.append(
+                {
+                    "content": chunk.strip(),
+                    "passage_order": len(chunks),
+                    "source_offset_start": start,
+                    "source_offset_end": end,
+                }
+            )
+        if end == len(content):
+            break
         start = end - overlap
     return chunks
 
@@ -37,10 +51,10 @@ async def chunk_text(content: str, chunk_size: int = 1000, overlap: int = 200):
 async def seed_database():
     """Seed the database with sample data."""
     print("Starting database seeding...")
-    
+
     # Initialize database
     await init_db()
-    
+
     async with async_session_factory() as session:
         try:
             # 1. Seed ICD codes
@@ -57,19 +71,28 @@ async def seed_database():
                 ("S72.0", "Hip Fracture", "Trauma", False, 7, 150000),
                 ("M54.5", "Lower Back Pain", "Musculoskeletal", True, 4, 40000),
             ]
-            
+
             for code, desc, cat, chronic, days, cost in icd_codes:
                 await session.execute(
                     text("""
-                        INSERT INTO icd_codes (code, description, category, is_chronic, typical_hospitalization_days, typical_treatment_cost)
-                        VALUES (:code, :desc, :cat, :chronic, :days, :cost)
+                        INSERT INTO icd_codes (code, description, category, is_chronic, is_pre_existing,
+                                               typical_hospitalization_days, typical_treatment_cost)
+                        VALUES (:code, :desc, :cat, :chronic, :pre_existing, :days, :cost)
                         ON CONFLICT (code) DO NOTHING
                     """),
-                    {"code": code, "desc": desc, "cat": cat, "chronic": chronic, "days": days, "cost": cost}
+                    {
+                        "code": code,
+                        "desc": desc,
+                        "cat": cat,
+                        "chronic": chronic,
+                        "pre_existing": chronic,
+                        "days": days,
+                        "cost": cost,
+                    },
                 )
             await session.commit()
             print(f"   Seeded {len(icd_codes)} ICD codes")
-            
+
             # 2. Seed care_providers
             print("\n2. Seeding care_providers...")
             care_providers = [
@@ -79,24 +102,38 @@ async def seed_database():
                 ("Harborview Clinic", "Riverton", "Coastal District", True),
                 ("Meadow General Clinic", "Clearwater", "South District", False),
             ]
-            
+
             for name, city, state, network in care_providers:
                 await session.execute(
                     text("""
-                        INSERT INTO care_providers (provider_label, city, state, is_participating)
-                        VALUES (:name, :city, :state, :network)
+                        INSERT INTO care_providers (
+                            provider_label,
+                            provider_kind,
+                            city,
+                            state,
+                            is_active,
+                            is_participating
+                        )
+                        VALUES (:name, :kind, :city, :state, :active, :network)
                         ON CONFLICT DO NOTHING
                     """),
-                    {"name": name, "city": city, "state": state, "network": network}
+                    {
+                        "name": name,
+                        "kind": "PARTICIPATING" if network else "NON_PARTICIPATING",
+                        "city": city,
+                        "state": state,
+                        "active": True,
+                        "network": network,
+                    },
                 )
             await session.commit()
             print(f"   Seeded {len(care_providers)} care_providers")
-            
+
             # 3. Seed benefit_contracts
             print("\n3. Seeding benefit_contracts...")
             benefit_contracts = generate_sample_benefit_contracts(3)
             contract_ids = []
-            
+
             for contract in benefit_contracts:
                 result = await session.execute(
                     text("""
@@ -117,29 +154,29 @@ async def seed_database():
                         "effective_until": contract["effective_until"],
                         "participant_count": contract["participant_count"],
                         "aggregate_benefit_cap": contract["aggregate_benefit_cap"],
-                        "contribution_amount": contract["contribution_amount"]
-                    }
+                        "contribution_amount": contract["contribution_amount"],
+                    },
                 )
                 contract_id = result.scalar()
                 contract_ids.append(contract_id)
-            
+
             await session.commit()
             print(f"   Seeded {len(benefit_contracts)} benefit_contracts")
-            
+
             # 4. Seed contract passages with embeddings
             print("\n4. Seeding contract passages with embeddings...")
             embedding_service = EmbeddingService()
             total_chunks = 0
-            
+
             for i, contract in enumerate(benefit_contracts):
                 contract_id = contract_ids[i]
-                chunks = await chunk_text(contract["source_text"])
-                
+                chunks = chunk_text(contract["source_text"])
+
                 # Get embeddings
                 chunk_texts = [c["content"] for c in chunks]
                 try:
                     embeddings = await embedding_service.embed_batch(chunk_texts)
-                    
+
                     for chunk, embedding in zip(chunks, embeddings):
                         await session.execute(
                             text("""
@@ -152,24 +189,24 @@ async def seed_database():
                                 "idx": chunk["passage_order"],
                                 "start": chunk["source_offset_start"],
                                 "end": chunk["source_offset_end"],
-                                "embedding": str(embedding)
-                            }
+                                "embedding": json.dumps(embedding),
+                            },
                         )
                         total_chunks += 1
                 except Exception as e:
                     print(f"   Warning: Could not generate embeddings: {e}")
-                    print("   Skipping embedding generation (requires OPENAI_API_KEY)")
-            
+                    print("   Skipping embedding generation (start Ollama and pull the embedding model)")
+
             await session.commit()
             print(f"   Seeded {total_chunks} contract passages")
-            
+
             # 5. Seed participants
             print("\n5. Seeding participants...")
             all_participant_ids = []
-            
+
             for contract_id in contract_ids:
                 participants = generate_participants(contract_id, 15)
-                
+
                 for participant in participants:
                     result = await session.execute(
                         text("""
@@ -189,28 +226,28 @@ async def seed_database():
                             "benefit_cap": participant["benefit_ceiling"],
                             "status": participant["status"],
                             "city": participant["city"],
-                            "state": participant["state"]
-                        }
+                            "state": participant["state"],
+                        },
                     )
                     all_participant_ids.append(result.scalar())
-            
+
             await session.commit()
             print(f"   Seeded {len(all_participant_ids)} participants")
-            
+
             # 6. Seed service_cases
             print("\n6. Seeding service_cases...")
             total_service_cases = 0
-            
+
             for contract_id in contract_ids:
                 # Get participant row IDs for this contract
                 result = await session.execute(
                     text("SELECT id FROM participants WHERE contract_id = :pid"),
-                    {"pid": contract_id}
+                    {"pid": contract_id},
                 )
                 participant_ids = [r[0] for r in result.fetchall()]
-                
+
                 service_cases = generate_service_cases(contract_id, participant_ids, 30)
-                
+
                 for service_case in service_cases:
                     await session.execute(
                         text("""
@@ -227,17 +264,17 @@ async def seed_database():
                                     :fixed_share_applied, :percentage_share_applied, :payable_amount,
                                     :case_status, :submitted_on, :resolved_on, :decision_reason)
                         """),
-                        service_case
+                        service_case,
                     )
                     total_service_cases += 1
-            
+
             await session.commit()
             print(f"   Seeded {total_service_cases} service_cases")
-            
+
             # 7. Seed evaluation questions
             print("\n7. Seeding evaluation questions...")
             questions = generate_eval_questions()
-            
+
             for q in questions:
                 await session.execute(
                     text("""
@@ -249,17 +286,17 @@ async def seed_database():
                         "question": q["question"],
                         "expected": q["expected_answer"],
                         "type": q["query_type"],
-                        "difficulty": q["difficulty"]
-                    }
+                        "difficulty": q["difficulty"],
+                    },
                 )
-            
+
             await session.commit()
             print(f"   Seeded {len(questions)} evaluation questions")
-            
+
             print("\n" + "=" * 50)
             print("Database seeding completed successfully!")
             print("=" * 50)
-            
+
         except Exception as e:
             await session.rollback()
             print(f"\nError seeding database: {e}")

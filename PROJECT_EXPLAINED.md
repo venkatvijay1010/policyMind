@@ -2,6 +2,11 @@
 
 > **Agentic RAG System for Insurance Policy Q&A**
 
+> **Current local implementation:** the runnable application defaults to SQLite
+> and Ollama (`qwen2.5:7b` + `nomic-embed-text`), with a browser chat UI at `/`.
+> References below to PostgreSQL/pgvector/OpenAI describe the original design;
+> see `README.md` for the current local setup.
+
 This document provides a comprehensive technical explanation of PolicyMind, covering architecture, AI concepts, workflows, and interview preparation materials.
 
 ---

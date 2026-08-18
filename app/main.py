@@ -1,18 +1,23 @@
 """
 FastAPI application entry point.
 """
-import structlog
+
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from pathlib import Path
+
+import structlog
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
+from app.api.routes import ask, health, ingest
+from app.api.routes import eval as eval_route
 from app.config import settings
-from app.infrastructure.database.postgres import init_db, close_db
-from app.api.routes import health, ingest, ask, eval as eval_route
-
+from app.infrastructure.database.postgres import close_db, init_db
+from app.infrastructure.rate_limit import limiter
 
 # Configure structured logging
 structlog.configure(
@@ -23,7 +28,7 @@ structlog.configure(
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
-        structlog.processors.JSONRenderer()
+        structlog.processors.JSONRenderer(),
     ],
     wrapper_class=structlog.stdlib.BoundLogger,
     context_class=dict,
@@ -32,7 +37,6 @@ structlog.configure(
 )
 
 logger = structlog.get_logger()
-limiter = Limiter(key_func=get_remote_address)
 
 
 @asynccontextmanager
@@ -42,9 +46,9 @@ async def lifespan(app: FastAPI):
     logger.info("Starting PolicyMind application", env=settings.app_env)
     await init_db()
     logger.info("Database initialized")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down PolicyMind application")
     await close_db()
@@ -53,11 +57,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     description="Agentic RAG system for Insurance Policy Q&A",
-    version="1.0.0",
+    version=settings.app_version,
     lifespan=lifespan,
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+WEB_DIR = Path(__file__).resolve().parent / "web"
+app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
 
 # Add rate limiter
 app.state.limiter = limiter
@@ -66,14 +73,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Add CORS middleware with environment-based configuration
 allowed_origins = settings.cors_origins_list
 if settings.is_production and "*" in allowed_origins:
-    # In production, don't allow all origins - default to same-origin
-    logger.warning("CORS_ORIGINS is set to '*' in production. Restricting to localhost.")
-    allowed_origins = ["http://localhost:3000", "http://localhost:8000"]
+    logger.warning("CORS_ORIGINS is set to '*' in production. Disabling cross-origin access.")
+    allowed_origins = []
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_credentials=bool(allowed_origins) and "*" not in allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -86,11 +92,23 @@ app.include_router(eval_route.router, prefix="/api/v2", tags=["Evaluation"])
 
 
 @app.get("/")
-async def root():
-    """Root endpoint."""
+@limiter.limit(settings.rate_limit)
+async def root(request: Request):
+    """Serve the browser chat client."""
+    del request
+    return FileResponse(WEB_DIR / "index.html")
+
+
+@app.get("/api")
+@limiter.limit(settings.rate_limit)
+async def api_status(request: Request):
+    """Return a compact API discovery document for programmatic clients."""
+    del request
     return {
         "app": settings.app_name,
-        "version": "1.0.0",
+        "version": settings.app_version,
         "status": "running",
-        "docs": "/docs"
+        "docs": "/docs",
+        "chat": "/",
+        "llm_provider": settings.llm_provider,
     }

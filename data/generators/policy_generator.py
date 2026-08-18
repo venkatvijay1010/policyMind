@@ -1,11 +1,10 @@
 """
 Generate sample policy documents for testing.
 """
-import json
-from typing import List
-from datetime import date, timedelta
-import random
 
+import random
+from datetime import date, timedelta
+from typing import List
 
 POLICY_TEMPLATES = [
     {
@@ -33,7 +32,7 @@ Room Rent Limits:
 - Premium Plan: No sub-limit on room rent
 
 ICU Charges: Up to 2x the applicable room rent limit
-"""
+""",
             },
             {
                 "name": "Maternity Benefits",
@@ -54,7 +53,7 @@ Conditions:
 - Coverage applies only to first 2 children
 - Must complete continuous coverage for waiting period
 - Complications arising from pregnancy are covered under maternity limit
-"""
+""",
             },
             {
                 "name": "Pre-existing Diseases",
@@ -79,7 +78,7 @@ Chronic Conditions Covered (after waiting):
 - Heart Disease
 - Thyroid Disorders
 - Asthma
-"""
+""",
             },
             {
                 "name": "Exclusions",
@@ -106,7 +105,7 @@ TIME-BOUND EXCLUSIONS (Waiting Period):
 - Maternity: 36 months
 - Specific diseases (cataract, hernia, etc.): 24 months
 - All other conditions: 30 days
-"""
+""",
             },
             {
                 "name": "Claim Process",
@@ -133,7 +132,7 @@ MEMBER-PAID CASES:
 2. Submit the service case within 45 days of completion
 3. Typical review window: 5-12 business days
 4. Approved amounts are sent through the configured payout method
-"""
+""",
             },
             {
                 "name": "Copay and Deductibles",
@@ -160,9 +159,9 @@ Fixed Share (Standard): CU 5,000
 After Fixed Share: CU 95,000
 Percentage Share (20%): CU 19,000
 Payable Amount: CU 76,000
-"""
-            }
-        ]
+""",
+            },
+        ],
     },
     {
         "contract_title": "Cedar Workforce Benefits",
@@ -187,7 +186,7 @@ Entry Age:
 - Continuation: Up to 80 years
 
 Contract Period: Twelve months from the configured effective date
-"""
+""",
             },
             {
                 "name": "Critical Illness",
@@ -210,49 +209,57 @@ Benefit Amount: 100% of Critical Illness Sum Insured
 Waiting Period: 90 days from policy start
 
 This is a one-time benefit and does not reduce the base health cover.
-"""
-            }
-        ]
-    }
+""",
+            },
+        ],
+    },
 ]
 
 
 def generate_contract_document(contract_title: str, template_index: int = 0) -> str:
     """Generate a full policy document from template."""
     template = POLICY_TEMPLATES[template_index % len(POLICY_TEMPLATES)]
-    
+
     doc_parts = [f"# {contract_title}\n\n"]
-    
+
     for section in template["sections"]:
         doc_parts.append(f"## {section['name']}\n")
         doc_parts.append(section["content"].strip())
         doc_parts.append("\n\n")
-    
+
     return "\n".join(doc_parts)
 
 
 def generate_sample_benefit_contracts(count: int = 5) -> List[dict]:
     """Generate multiple sample benefit_contracts for database seeding."""
     benefit_contracts = []
-    sponsors = ["Blue Meadow Studio", "Northwind Works", "Cedar Labs", "Juniper Cooperative", "Lakehouse Design"]
-    
+    sponsors = [
+        "Blue Meadow Studio",
+        "Northwind Works",
+        "Cedar Labs",
+        "Juniper Cooperative",
+        "Lakehouse Design",
+    ]
+
     for i in range(count):
         template = POLICY_TEMPLATES[i % len(POLICY_TEMPLATES)]
         start_date = date.today() - timedelta(days=random.randint(30, 365))
-        
-        benefit_contracts.append({
-            "contract_ref": f"BEN-{730000 + i}",
-            "contract_title": f"{sponsors[i % len(sponsors)]} - {template['contract_title']}",
-            "plan_category": template["plan_category"],
-            "sponsor_label": sponsors[i % len(sponsors)],
-            "effective_from": start_date,
-            "effective_until": start_date + timedelta(days=365),
-            "participant_count": random.randint(50, 500),
-            "aggregate_benefit_cap": random.randint(5, 50) * 1000000,
-            "contribution_amount": random.randint(10, 100) * 100000,
-            "source_text": generate_contract_document(template["contract_title"], i)
-        })
-    
+
+        benefit_contracts.append(
+            {
+                "contract_ref": f"BEN-{730000 + i}",
+                "contract_title": f"{sponsors[i % len(sponsors)]} - {template['contract_title']}",
+                "plan_category": template["plan_category"],
+                "sponsor_label": sponsors[i % len(sponsors)],
+                "effective_from": start_date,
+                "effective_until": start_date + timedelta(days=365),
+                "participant_count": random.randint(50, 500),
+                "aggregate_benefit_cap": random.randint(5, 50) * 1000000,
+                "contribution_amount": random.randint(10, 100) * 100000,
+                "source_text": generate_contract_document(template["contract_title"], i),
+            }
+        )
+
     return benefit_contracts
 
 

@@ -1,23 +1,28 @@
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system policymind \
+    && useradd --system --gid policymind --create-home --home-dir /home/policymind policymind
 
-# Copy requirements first for caching
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
+# Copy package metadata and source before installation so Hatch can build the project.
+COPY pyproject.toml README.md ./
+COPY app ./app
+COPY data ./data
 
-# Copy application code
-COPY . .
+RUN pip install --no-cache-dir . \
+    && mkdir -p /app/data/documents /app/data/seed \
+    && chown -R policymind:policymind /app
 
-# Create data directories
-RUN mkdir -p /app/data/documents /app/data/seed
+USER policymind
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/live', timeout=3)" || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

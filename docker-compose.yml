@@ -1,33 +1,19 @@
-version: '3.8'
-
 services:
-  db:
-    image: pgvector/pgvector:pg16
-    container_name: policymind-db
-    environment:
-      POSTGRES_USER: policymind
-      POSTGRES_PASSWORD: policymind
-      POSTGRES_DB: policymind
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U policymind"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   app:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: policymind-app
     environment:
-      - DATABASE_URL=postgresql+asyncpg://policymind:policymind@db:5432/policymind
-      - DATABASE_SYNC_URL=postgresql://policymind:policymind@db:5432/policymind
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/policymind.db
+      - DATABASE_SYNC_URL=sqlite:////app/data/policymind.db
+      - LLM_PROVIDER=ollama
+      # Ollama runs on the Windows/macOS/Linux host, not in this container.
+      - LLM_BASE_URL=http://host.docker.internal:11434/v1
+      - LLM_API_KEY=ollama
+      - CHAT_MODEL=qwen2.5:7b
+      - EMBEDDING_MODEL=nomic-embed-text
+      - EMBEDDING_DIMENSION=768
       - APP_ENV=development
       - LOG_LEVEL=INFO
     ports:
@@ -35,10 +21,4 @@ services:
     volumes:
       - ./app:/app/app
       - ./data:/app/data
-    depends_on:
-      db:
-        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-volumes:
-  pgdata:

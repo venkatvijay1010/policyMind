@@ -1,46 +1,47 @@
 """
 Citation builder for grounding answers in source documents.
 """
-from typing import List, Optional
+
+from typing import List
+
 from app.domain.entities.models import Citation, DocumentChunk
 
 
 class CitationBuilder:
     """
     Builds citations from retrieved document chunks.
-    
+
     Every claim in the answer should be traceable to a source.
     This is critical for preventing hallucination.
     """
-    
+
     @staticmethod
     def build_citations(
-        chunks: List[DocumentChunk],
-        max_snippet_length: int = 200
+        chunks: List[DocumentChunk], max_snippet_length: int = 200
     ) -> List[Citation]:
         """
         Build citation objects from retrieved chunks.
         """
         citations = []
-        
+
         for i, chunk in enumerate(chunks, 1):
             # Truncate snippet
             snippet = chunk.content[:max_snippet_length]
             if len(chunk.content) > max_snippet_length:
                 snippet += "..."
-            
+
             citation = Citation(
                 source_id=i,
-                contract_title=f"Policy-{chunk.contract_id}",
+                contract_title=chunk.contract_title or f"Policy-{chunk.contract_id}",
                 section=chunk.topic_title,
                 page=chunk.source_page,
                 chunk_text=snippet,
-                relevance_score=chunk.score or 0.0
+                relevance_score=chunk.score or 0.0,
             )
             citations.append(citation)
-        
+
         return citations
-    
+
     @staticmethod
     def format_citations_for_prompt(citations: List[Citation]) -> str:
         """
@@ -48,7 +49,7 @@ class CitationBuilder:
         """
         if not citations:
             return "No relevant sources found."
-        
+
         formatted = []
         for i, citation in enumerate(citations, 1):
             source_info = f"[Source {i}]"
@@ -56,11 +57,11 @@ class CitationBuilder:
                 source_info += f" Section: {citation.section}"
             if citation.page:
                 source_info += f" (Page {citation.page})"
-            
+
             formatted.append(f"{source_info}\n{citation.chunk_text}")
-        
+
         return "\n\n".join(formatted)
-    
+
     @staticmethod
     def format_citations_for_response(citations: List[Citation]) -> List[dict]:
         """
@@ -72,16 +73,15 @@ class CitationBuilder:
                 "section": citation.section or "General",
                 "page": citation.page,
                 "snippet": citation.chunk_text,
-                "relevance": round(citation.relevance_score, 3) if citation.relevance_score else None
+                "relevance": round(citation.relevance_score, 3)
+                if citation.relevance_score
+                else None,
             }
             for citation in citations
         ]
-    
+
     @staticmethod
-    def add_inline_citations(
-        answer: str,
-        citations: List[Citation]
-    ) -> str:
+    def add_inline_citations(answer: str, citations: List[Citation]) -> str:
         """
         Add inline citation markers to the answer.
         This is a simple version - production would use more sophisticated matching.
@@ -89,7 +89,7 @@ class CitationBuilder:
         # For now, just append a sources section
         if not citations:
             return answer
-        
+
         sources_section = "\n\n**Sources:**"
         for i, citation in enumerate(citations, 1):
             source_line = f"\n[{i}] {citation.contract_title}"
@@ -98,5 +98,5 @@ class CitationBuilder:
             if citation.page:
                 source_line += f" (Page {citation.page})"
             sources_section += source_line
-        
+
         return answer + sources_section

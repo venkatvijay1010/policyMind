@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="PolicyMind is a local RAG assistant for your policy documents and service-case data."
+    />
+    <title>PolicyMind</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="PolicyMind navigation">
+        <a class="brand" href="/" aria-label="PolicyMind home">
+          <span class="brand-mark" aria-hidden="true">P</span>
+          <span>
+            <strong>PolicyMind</strong>
+            <small>LOCAL RAG WORKSPACE</small>
+          </span>
+        </a>
+
+        <button class="new-chat" id="new-chat" type="button">
+          <span class="button-icon" aria-hidden="true">+</span>
+          New conversation
+        </button>
+
+        <section class="sidebar-section knowledge-section" aria-labelledby="knowledge-heading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow" id="knowledge-heading">Knowledge base</p>
+              <p class="section-copy">Choose a policy or add your own document.</p>
+            </div>
+            <button class="icon-button" id="upload-toggle" type="button" aria-expanded="false" aria-controls="upload-panel" title="Upload a document">
+              <span aria-hidden="true">+</span>
+            </button>
+          </div>
+
+          <form class="upload-panel" id="upload-form" hidden>
+            <label class="field-label" for="upload-title">Document title</label>
+            <input id="upload-title" maxlength="255" placeholder="e.g. 2026 Benefits Guide" />
+
+            <label class="dropzone" id="dropzone" for="upload-file">
+              <input id="upload-file" type="file" accept=".txt,.md,.pdf" />
+              <span class="dropzone-icon" aria-hidden="true">&#8593;</span>
+              <span class="dropzone-title">Choose a document</span>
+              <span class="dropzone-copy">TXT, Markdown, or PDF up to 10 MB</span>
+            </label>
+            <p class="selected-file" id="selected-file">No file selected</p>
+            <button class="upload-button" id="upload-button" type="submit">Index document</button>
+            <p class="upload-status" id="upload-status" role="status"></p>
+          </form>
+
+          <div class="scope-list" id="scope-list" aria-live="polite">
+            <p class="library-empty">Loading your available documents...</p>
+          </div>
+        </section>
+
+        <section class="sidebar-section examples-section" aria-labelledby="examples-heading">
+          <p class="eyebrow" id="examples-heading">Try an example</p>
+          <button class="suggestion" type="button" data-prompt="What benefit cap options are available?">
+            Benefit cap options
+          </button>
+          <button class="suggestion" type="button" data-prompt="What does the policy say about pre-existing conditions?">
+            Pre-existing conditions
+          </button>
+          <button class="suggestion" type="button" data-prompt="How many service cases were declined in 2024?">
+            Declined service cases
+          </button>
+        </section>
+
+        <div class="sidebar-footer">
+          <div class="local-status" id="local-status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span>Checking local setup...</span>
+          </div>
+          <a href="/docs" target="_blank" rel="noreferrer">Open API and ingestion docs</a>
+        </div>
+      </aside>
+
+      <main class="chat-panel">
+        <header class="chat-header">
+          <div>
+            <p class="eyebrow">Private, local-first assistant</p>
+            <h1>Chat normally. Search your documents when it matters.</h1>
+            <p class="header-copy" id="scope-summary">Normal conversation stays in chat; policy and data questions use your local sources.</p>
+          </div>
+          <div class="header-status">
+            <span class="provider-chip" id="provider-chip">Loading local model</span>
+            <span class="privacy-chip">Runs on your machine</span>
+          </div>
+        </header>
+
+        <section class="messages" id="messages" aria-live="polite" aria-label="Conversation">
+          <article class="message assistant-message welcome-message">
+            <div class="avatar" aria-hidden="true">P</div>
+            <div class="message-content welcome-card">
+              <p class="message-label">PolicyMind</p>
+              <div class="message-body">
+                <p>I can answer from your policy documents, analyse service-case data, and show the exact passages used.</p>
+                <p class="muted">Use <strong>Upload</strong> in the left panel to add a TXT, Markdown, or text-based PDF to the local RAG index.</p>
+              </div>
+              <div class="welcome-badges">
+                <span>Local Ollama</span>
+                <span>SQLite knowledge base</span>
+                <span>Cited answers</span>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="composer-wrap">
+          <form class="composer" id="chat-form">
+            <label class="sr-only" for="prompt">Your message</label>
+            <textarea
+              id="prompt"
+              name="prompt"
+              rows="1"
+              maxlength="1000"
+              placeholder="Ask about your policies — or just say hello..."
+              autocomplete="off"
+              aria-describedby="composer-feedback composer-note"
+              required
+            ></textarea>
+            <div class="composer-controls">
+              <div class="query-options">
+                <label class="control-field">
+                  <span>Search</span>
+                  <select id="scope-key" aria-label="Document scope">
+                    <option value="">All documents</option>
+                  </select>
+                </label>
+                <label class="control-field strategy-field">
+                  <span>Method</span>
+                  <select id="retrieval-strategy" aria-label="Retrieval strategy">
+                    <option value="blended">Smart</option>
+                    <option value="semantic">Semantic</option>
+                    <option value="lexical">Keyword</option>
+                  </select>
+                </label>
+              </div>
+              <button class="send-button" id="send-button" type="submit">
+                <span class="send-label">Send</span>
+                <span class="send-icon" aria-hidden="true">&#8593;</span>
+              </button>
+            </div>
+          </form>
+          <p class="composer-feedback" id="composer-feedback" role="status" aria-live="polite"></p>
+          <p class="composer-note" id="composer-note"><kbd>Enter</kbd> to send <span aria-hidden="true">|</span> <kbd>Shift + Enter</kbd> for a new line</p>
+        </section>
+      </main>
+    </div>
+
+    <template id="loading-template">
+      <article class="message assistant-message loading-message">
+        <div class="avatar avatar-thinking" aria-hidden="true">P</div>
+        <div class="message-content activity-card">
+          <p class="message-label">PolicyMind is working locally</p>
+          <div class="activity-main">
+            <span class="activity-orbit" aria-hidden="true"><i></i></span>
+            <div>
+              <p class="activity-stage">Thinking</p>
+              <p class="activity-detail">Understanding your message.</p>
+            </div>
+            <span class="activity-elapsed">0.0s</span>
+          </div>
+          <div class="activity-steps" aria-hidden="true">
+            <span data-stage="understanding">Understand</span>
+            <span data-stage="chatting">Chat</span>
+            <span data-stage="retrieving">Retrieve</span>
+            <span data-stage="evidence">Review</span>
+            <span data-stage="drafting">Answer</span>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>
