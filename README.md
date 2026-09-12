@@ -250,6 +250,10 @@ pytest --cov=app --cov-report=html
 pytest tests/unit/test_coverage_calculator.py -v
 ```
 
+If an interrupted test run leaves `pytest-cache-files-*` folders in the project
+root, preview their removal with `python scripts/cleanup_pytest_temp.py`; add
+`--delete` to remove them after stopping active test processes.
+
 ## 🔧 Configuration
 
 Environment variables:

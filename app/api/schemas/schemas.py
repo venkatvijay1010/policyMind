@@ -143,6 +143,9 @@ class KnowledgeSourceRequest(BaseModel):
     segment_overlap: int = Field(
         settings.chunk_overlap, ge=0, le=500, description="Overlap between segments"
     )
+    # Internal provenance passed from the upload parser. It is deliberately not
+    # required for API callers because plain text has no physical pages.
+    source_page_starts: List[int] = Field(default_factory=list, exclude=True)
 
     @model_validator(mode="after")
     def require_one_source(self):

@@ -1,7 +1,9 @@
 """Document ingestion endpoints and safe chunking helpers."""
 
 import json
+import re
 import time
+from bisect import bisect_right
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -26,18 +28,62 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/knowledge/scopes", tags=["Knowledge"])
 
 
+_MARKDOWN_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+_UPPERCASE_HEADING = re.compile(r"^\s*([A-Z][A-Z0-9 &/(),.'-]{3,})\s*$")
+
+
+def _section_at_offset(text_content: str, offset: int, chunk_end: int) -> str | None:
+    """Return the active heading, preferring a section over a document title."""
+    section: str | None = None
+    section_is_document_title = False
+    cursor = 0
+    for line in text_content.splitlines(keepends=True):
+        if cursor > offset:
+            break
+        stripped = line.strip()
+        markdown_match = _MARKDOWN_HEADING.match(stripped)
+        uppercase_match = _UPPERCASE_HEADING.match(stripped)
+        if markdown_match:
+            section = markdown_match.group(1).strip()
+            section_is_document_title = stripped.startswith("# ")
+        elif uppercase_match:
+            section = uppercase_match.group(1).strip().title()
+            section_is_document_title = False
+        cursor += len(line)
+
+    # A first chunk normally starts with the document's H1. Use the first
+    # actual section in that chunk so a citation says "Coverage" rather than
+    # merely repeating the document title.
+    if section is None or section_is_document_title:
+        cursor = 0
+        for line in text_content.splitlines(keepends=True):
+            stripped = line.strip()
+            markdown_match = _MARKDOWN_HEADING.match(stripped)
+            uppercase_match = _UPPERCASE_HEADING.match(stripped)
+            if offset <= cursor < chunk_end and (
+                (markdown_match and not stripped.startswith("# ")) or uppercase_match
+            ):
+                if markdown_match:
+                    return markdown_match.group(1).strip()
+                return uppercase_match.group(1).strip().title()
+            cursor += len(line)
+    return section
+
+
 def chunk_text(
     text_content: str,
     chunk_size: int = 1000,
     chunk_overlap: int = 200,
+    page_starts: list[int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Split text into bounded, overlapping chunks with correct source offsets."""
+    """Split text into bounded chunks and retain section/page provenance."""
     if chunk_size <= 0:
         raise ValueError("chunk_size must be greater than zero")
     if not 0 <= chunk_overlap < chunk_size:
         raise ValueError("chunk_overlap must be non-negative and smaller than chunk_size")
 
     chunks: list[dict[str, Any]] = []
+    normalized_page_starts = sorted({start for start in (page_starts or []) if start >= 0})
     content_length = len(text_content)
     start = 0
 
@@ -66,6 +112,16 @@ def chunk_text(
                     "passage_order": len(chunks),
                     "source_offset_start": source_offset_start,
                     "source_offset_end": source_offset_start + len(chunk_content),
+                    "topic_title": _section_at_offset(
+                        text_content, source_offset_start, source_offset_start + len(chunk_content)
+                    ),
+                    # Text and Markdown do not have trustworthy physical pages. PDF extraction
+                    # provides page starts; then this becomes the real 1-based source page.
+                    "source_page": (
+                        bisect_right(normalized_page_starts, source_offset_start)
+                        if normalized_page_starts
+                        else None
+                    ),
                 }
             )
 
@@ -145,6 +201,7 @@ async def _source_request_from_upload(
     filename = file.filename or "uploaded-document"
     suffix = Path(filename).suffix.lower()
 
+    page_starts: list[int] = []
     if suffix in {".txt", ".md"}:
         try:
             text_content = content.decode("utf-8")
@@ -155,7 +212,14 @@ async def _source_request_from_upload(
             from pypdf import PdfReader
 
             reader = PdfReader(BytesIO(content))
-            text_content = "\n\n".join(page.extract_text() or "" for page in reader.pages)
+            pages: list[str] = []
+            current_offset = 0
+            for page in reader.pages:
+                page_starts.append(current_offset)
+                page_text = page.extract_text() or ""
+                pages.append(page_text)
+                current_offset += len(page_text) + 2
+            text_content = "\n\n".join(pages)
         except ImportError as exc:
             raise HTTPException(
                 status_code=503, detail="PDF support is not installed on this server"
@@ -178,6 +242,7 @@ async def _source_request_from_upload(
         source_text=text_content,
         segment_length=chunk_size,
         segment_overlap=chunk_overlap,
+        source_page_starts=page_starts,
     )
 
 
@@ -213,6 +278,7 @@ async def _index_contract_source(
         text_content,
         chunk_size=source_request.segment_length,
         chunk_overlap=source_request.segment_overlap,
+        page_starts=source_request.source_page_starts,
     )
     if not chunks:
         raise HTTPException(status_code=400, detail="No chunks created from document")
@@ -238,6 +304,8 @@ async def _index_contract_source(
             "passage_order": chunk["passage_order"],
             "source_offset_start": chunk["source_offset_start"],
             "source_offset_end": chunk["source_offset_end"],
+            "topic_title": chunk["topic_title"],
+            "source_page": chunk["source_page"],
             # SQLite persists local embedding vectors as JSON. JSON text also
             # remains portable if the database is later moved elsewhere.
             "embedding": json.dumps(embedding),
@@ -255,9 +323,10 @@ async def _index_contract_source(
         text(
             """
             INSERT INTO contract_passages
-            (contract_id, content, passage_order, source_offset_start, source_offset_end, embedding)
+            (contract_id, content, passage_order, source_offset_start, source_offset_end,
+             topic_title, source_page, embedding)
             VALUES (:contract_id, :content, :passage_order, :source_offset_start,
-                    :source_offset_end, :embedding)
+                    :source_offset_end, :topic_title, :source_page, :embedding)
             """
         ),
         insert_parameters,

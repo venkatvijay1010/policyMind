@@ -4,6 +4,7 @@ Database seeding script - populate database with sample data.
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -24,22 +25,28 @@ from data.generators.service_cases_generator import generate_participants, gener
 def chunk_text(
     content: str, chunk_size: int = 1000, overlap: int = 200
 ) -> list[dict[str, int | str]]:
-    """Simple text chunking."""
+    """Simple chunking that also retains the nearest document heading."""
     if chunk_size <= 0 or not 0 <= overlap < chunk_size:
         raise ValueError("overlap must be non-negative and smaller than chunk_size")
 
     chunks = []
+    section_pattern = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
     start = 0
     while start < len(content):
         end = min(start + chunk_size, len(content))
         chunk = content[start:end]
         if chunk.strip():
+            preceding_headings = [
+                heading for heading in section_pattern.finditer(content) if heading.start() <= start
+            ]
+            section = preceding_headings[-1].group(1).strip() if preceding_headings else None
             chunks.append(
                 {
                     "content": chunk.strip(),
                     "passage_order": len(chunks),
                     "source_offset_start": start,
                     "source_offset_end": end,
+                    "topic_title": section,
                 }
             )
         if end == len(content):
@@ -180,8 +187,9 @@ async def seed_database():
                     for chunk, embedding in zip(chunks, embeddings):
                         await session.execute(
                             text("""
-                                INSERT INTO contract_passages (contract_id, content, passage_order, source_offset_start, source_offset_end, embedding)
-                                VALUES (:contract_id, :content, :idx, :start, :end, :embedding)
+                                INSERT INTO contract_passages
+                                (contract_id, content, passage_order, source_offset_start, source_offset_end, topic_title, embedding)
+                                VALUES (:contract_id, :content, :idx, :start, :end, :topic_title, :embedding)
                             """),
                             {
                                 "contract_id": contract_id,
@@ -189,6 +197,7 @@ async def seed_database():
                                 "idx": chunk["passage_order"],
                                 "start": chunk["source_offset_start"],
                                 "end": chunk["source_offset_end"],
+                                "topic_title": chunk["topic_title"],
                                 "embedding": json.dumps(embedding),
                             },
                         )

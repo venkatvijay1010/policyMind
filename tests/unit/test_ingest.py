@@ -38,6 +38,15 @@ def test_chunk_text_preserves_correct_source_offsets():
     )
 
 
+def test_chunk_text_records_section_and_pdf_page_provenance():
+    source = "# Policy Guide\n\n## Eligibility\nCoverage starts after a waiting period."
+
+    chunks = chunk_text(source, chunk_size=200, chunk_overlap=10, page_starts=[0])
+
+    assert chunks[0]["topic_title"] == "Eligibility"
+    assert chunks[0]["source_page"] == 1
+
+
 def test_url_ingestion_requires_an_explicit_host_allowlist():
     with pytest.raises(HTTPException) as exc_info:
         _validate_source_uri("https://example.com/policy.txt")

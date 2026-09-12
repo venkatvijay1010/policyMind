@@ -20,12 +20,41 @@ const uploadStatus = document.querySelector("#upload-status");
 const selectedFile = document.querySelector("#selected-file");
 const dropzone = document.querySelector("#dropzone");
 const composerFeedback = document.querySelector("#composer-feedback");
+const toastRegion = document.querySelector("#toast-region");
+const commandTrigger = document.querySelector("#command-trigger");
+const commandPalette = document.querySelector("#command-palette");
+const commandClose = document.querySelector("#command-close");
+const commandInput = document.querySelector("#command-input");
+const commandResults = document.querySelector("#command-results");
+const confirmDialog = document.querySelector("#confirm-dialog");
+const confirmCopy = document.querySelector("#confirm-copy");
+const themeToggle = document.querySelector("#theme-toggle");
 
 let isSending = false;
 let activeController = null;
 let knownScopes = [];
 let uploadProgressTimer = null;
 let conversationHistory = [];
+let commandItems = [];
+let selectedCommandIndex = 0;
+
+const THEME_STORAGE_KEY = "policymind-theme";
+
+function preferredTheme() {
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (storedTheme === "light" || storedTheme === "dark") return storedTheme;
+  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function applyTheme(theme, persist = true) {
+  const nextTheme = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = nextTheme;
+  themeToggle.setAttribute("aria-pressed", String(nextTheme === "light"));
+  themeToggle.setAttribute("aria-label", `Switch to ${nextTheme === "light" ? "dark" : "light"} theme`);
+  themeToggle.querySelector(".theme-icon").innerHTML = nextTheme === "light" ? "&#9728;" : "&#9789;";
+  themeToggle.querySelector(".theme-label").textContent = nextTheme === "light" ? "Light" : "Dark";
+  if (persist) window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+}
 
 const documentStageOrder = ["understanding", "retrieving", "evidence", "drafting"];
 const chatStageOrder = ["understanding", "chatting"];
@@ -76,6 +105,115 @@ function setComposerFeedback(message = "", state = "") {
   composerFeedback.dataset.state = state;
 }
 
+function showToast(message, tone = "success") {
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${tone}`;
+  toast.innerHTML = `<span class="toast-icon" aria-hidden="true">${tone === "success" ? "&#10003;" : "!"}</span><span>${escapeHtml(message)}</span>`;
+  toastRegion.append(toast);
+  window.setTimeout(() => toast.classList.add("is-leaving"), 3200);
+  window.setTimeout(() => toast.remove(), 3500);
+}
+
+function commandCatalog() {
+  return [
+    { type: "new", title: "New conversation", detail: "Clear this conversation and start fresh", icon: "&#10022;" },
+    { type: "ask", title: "Ask a question", detail: "Focus the policy intelligence composer", icon: "&#8599;" },
+    { type: "upload", title: "Add a document", detail: "Upload a TXT, Markdown, or PDF source", icon: "&#8679;" },
+    { type: "theme", title: "Switch theme", detail: "Toggle between light and dark appearance", icon: "&#9788;" },
+    ...knownScopes.map((scope) => ({
+      type: "scope",
+      scopeKey: String(scope.scope_key),
+      title: scope.title || "Untitled document",
+      detail: `${scope.segment_count} indexed passages`,
+      icon: "&#9636;",
+    })),
+    ...Array.from(document.querySelectorAll(".suggestion")).map((button) => ({
+      type: "prompt",
+      prompt: button.dataset.prompt || "",
+      title: button.textContent?.trim() || "Suggested question",
+      detail: "Run this example", icon: "&#10022;",
+    })),
+  ];
+}
+
+function renderCommandResults(query = "") {
+  const normalized = query.trim().toLowerCase();
+  commandItems = commandCatalog().filter((item) =>
+    `${item.title} ${item.detail}`.toLowerCase().includes(normalized),
+  );
+  selectedCommandIndex = 0;
+  commandResults.innerHTML = commandItems.length
+    ? commandItems
+        .map((item, index) => `
+          <button class="command-result" type="button" role="option" aria-selected="false" data-command-index="${index}">
+            <span class="command-result-icon" aria-hidden="true">${item.icon}</span>
+            <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></span>
+            <span class="command-result-arrow" aria-hidden="true">&rarr;</span>
+          </button>
+        `)
+        .join("")
+    : `<p class="command-empty">No matching actions or documents.</p>`;
+  setCommandSelection(0);
+}
+
+function setCommandSelection(index) {
+  if (!commandItems.length) return;
+  selectedCommandIndex = (index + commandItems.length) % commandItems.length;
+  commandResults.querySelectorAll(".command-result").forEach((button, buttonIndex) => {
+    const isSelected = buttonIndex === selectedCommandIndex;
+    button.classList.toggle("is-selected", isSelected);
+    button.setAttribute("aria-selected", String(isSelected));
+    if (isSelected) button.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function closeCommandPalette() {
+  if (commandPalette?.open) commandPalette.close();
+}
+
+function openCommandPalette() {
+  if (!commandPalette?.showModal) return;
+  renderCommandResults();
+  commandPalette.showModal();
+  window.setTimeout(() => commandInput.focus(), 0);
+}
+
+function activateCommand(item) {
+  if (!item) return;
+  closeCommandPalette();
+  if (item.type === "new") {
+    newChatButton.click();
+  } else if (item.type === "ask") {
+    promptInput.focus();
+  } else if (item.type === "upload") {
+    toggleUpload(true);
+  } else if (item.type === "theme") {
+    applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+  } else if (item.type === "scope") {
+    scopeInput.value = item.scopeKey;
+    updateScopeSummary();
+    promptInput.focus();
+  } else if (item.type === "prompt") {
+    promptInput.value = item.prompt;
+    resizeComposer();
+    updateSendButton();
+    promptInput.focus();
+  }
+}
+
+function requestDeleteConfirmation(documentTitle) {
+  if (!confirmDialog?.showModal) {
+    return Promise.resolve(window.confirm(`Delete "${documentTitle}" and its indexed passages?`));
+  }
+  confirmCopy.textContent = `This permanently removes “${documentTitle}” and all of its indexed passages.`;
+  confirmDialog.showModal();
+  return new Promise((resolve) => {
+    confirmDialog.addEventListener("close", () => resolve(confirmDialog.returnValue === "confirm"), {
+      once: true,
+    });
+  });
+}
+
 function updateSendButton() {
   if (isSending) {
     sendButton.disabled = false;
@@ -96,10 +234,14 @@ function welcomeMarkup() {
     <article class="message assistant-message welcome-message">
       <div class="avatar" aria-hidden="true">P</div>
       <div class="message-content welcome-card">
-        <p class="message-label">PolicyMind</p>
+        <p class="message-label"><span class="message-presence" aria-hidden="true"></span> PolicyMind</p>
         <div class="message-body">
-          <p>New conversation started. Chat normally, or ask about a policy, your uploaded document, or service-case data.</p>
-          <p class="muted">I only search local sources when the question actually needs them.</p>
+          <p>Start with a policy question, then inspect the evidence behind every answer.</p>
+          <p class="muted">Your local model decides whether to chat, retrieve policy passages, analyse data, or combine both.</p>
+        </div>
+        <div class="onboarding-actions">
+          <button type="button" class="onboarding-action" data-quick-prompt="What benefit cap options are available?"><span aria-hidden="true">&#10022;</span> Explore a policy</button>
+          <button type="button" class="onboarding-action" data-command="upload"><span aria-hidden="true">&#8679;</span> Add a document</button>
         </div>
       </div>
     </article>
@@ -158,6 +300,7 @@ function addLoadingMessage() {
     if (elapsed) elapsed.textContent = `${((performance.now() - startedAt) / 1000).toFixed(1)}s`;
   }, 100);
   updateLoadingMessage(element, { stage: "understanding", message: "Thinking" });
+  messages.setAttribute("aria-busy", "true");
   messages.append(fragment);
   scrollToLatest();
   return element;
@@ -167,6 +310,7 @@ function removeLoadingMessage(element) {
   if (!element) return;
   if (element._elapsedTimer) window.clearInterval(element._elapsedTimer);
   element.remove();
+  messages.setAttribute("aria-busy", "false");
 }
 
 function resultMeta(result) {
@@ -183,21 +327,22 @@ function citationsMarkup(citations) {
   const items = citations
     .map(
       (citation, index) => `
-        <details class="citation">
+        <details class="citation" open>
           <summary>
-            <span>Source ${index + 1}</span>
-            <span>${escapeHtml(citation.contract_title || "Policy document")}</span>
+            <span class="citation-source"><b>${index + 1}</b> Evidence source</span>
+            <span class="citation-document">${escapeHtml(citation.contract_title || "Policy document")}</span>
           </summary>
-          <p class="citation-location">${escapeHtml(citation.section || "Indexed policy passage")}${
-            citation.page ? ` | page ${escapeHtml(citation.page)}` : ""
-          }</p>
-          <p>${escapeHtml(citation.chunk_text || "")}</p>
+          <div class="citation-meta">
+            <span class="citation-detail"><span aria-hidden="true">&sect;</span> Section: ${escapeHtml(citation.section || `Policy passage ${index + 1}`)}</span>
+            <span class="citation-detail"><span aria-hidden="true">&#9636;</span> ${citation.page ? `Page ${escapeHtml(citation.page)}` : `Passage ${index + 1}`}</span>
+          </div>
+          <p class="citation-excerpt">${escapeHtml(citation.chunk_text || "")}</p>
         </details>
       `,
     )
     .join("");
 
-  return `<section class="sources"><p class="source-heading">Evidence used</p>${items}</section>`;
+  return `<section class="sources"><div class="source-heading"><span>Evidence used</span><span>${citations.length} source${citations.length === 1 ? "" : "s"}</span></div>${items}</section>`;
 }
 
 function sqlMarkup(result) {
@@ -240,7 +385,7 @@ function setSending(sending) {
   sendButton.classList.toggle("is-cancel", sending);
   sendButton.setAttribute("aria-label", sending ? "Stop current request" : "Send question");
   sendLabel.textContent = sending ? "Stop" : "Send";
-  sendIcon.textContent = sending ? "x" : "↑";
+  sendIcon.textContent = sending ? "x" : "\u2191";
   updateSendButton();
 }
 
@@ -342,8 +487,8 @@ function selectedScope() {
 function updateScopeSummary() {
   const scope = selectedScope();
   scopeSummary.textContent = scope
-    ? `Focused on ${scope.title} (${scope.segment_count} indexed passages).`
-    : "Normal conversation stays in chat; policy and data questions use your local sources.";
+    ? `Searching ${scope.title} · ${scope.segment_count} indexed passages · Smart retrieval`
+    : "Searching all documents · Smart retrieval";
   scopeList.querySelectorAll(".scope-card").forEach((card) => {
     card.classList.toggle("is-selected", card.dataset.scopeKey === scopeInput.value);
   });
@@ -382,6 +527,7 @@ function renderScopeList() {
 }
 
 async function loadScopes(selectScopeKey = "") {
+  scopeList.setAttribute("aria-busy", "true");
   try {
     const response = await fetch("/api/v2/knowledge/scopes");
     if (!response.ok) throw new Error("Unable to load documents");
@@ -398,6 +544,8 @@ async function loadScopes(selectScopeKey = "") {
     updateScopeSummary();
   } catch {
     scopeList.innerHTML = `<p class="library-empty library-error">Could not load the local document library.</p>`;
+  } finally {
+    scopeList.setAttribute("aria-busy", "false");
   }
 }
 
@@ -444,10 +592,13 @@ async function uploadDocument() {
 
     await loadScopes(String(result.scope_key));
     setUploadStatus(`Ready: ${result.segments_created} passages indexed in ${formatDuration(result.processing_time_ms)}.`, "success");
+    showToast(`${result.segments_created} passages are ready to search.`);
     uploadForm.reset();
     showSelectedFile();
   } catch (error) {
-    setUploadStatus(error instanceof Error ? error.message : "Unable to index that document.", "error");
+    const message = error instanceof Error ? error.message : "Unable to index that document.";
+    setUploadStatus(message, "error");
+    showToast(message, "error");
   } finally {
     if (uploadProgressTimer) window.clearTimeout(uploadProgressTimer);
     uploadButton.disabled = false;
@@ -456,7 +607,7 @@ async function uploadDocument() {
 
 async function deleteUploadedScope(scopeKey) {
   const scope = knownScopes.find((item) => String(item.scope_key) === String(scopeKey));
-  if (!scope || !window.confirm(`Delete "${scope.title}" and its indexed passages?`)) return;
+  if (!scope || !(await requestDeleteConfirmation(scope.title))) return;
 
   try {
     const response = await fetch(`/api/v2/knowledge/scopes/${encodeURIComponent(scopeKey)}`, {
@@ -466,8 +617,11 @@ async function deleteUploadedScope(scopeKey) {
     if (!response.ok) throw new Error(body.detail || "Unable to delete that document.");
     const selectedWasDeleted = scopeInput.value === String(scopeKey);
     await loadScopes(selectedWasDeleted ? "" : scopeInput.value);
+    showToast(`Removed ${scope.title} and its indexed passages.`);
   } catch (error) {
-    setUploadStatus(error instanceof Error ? error.message : "Unable to delete that document.", "error");
+    const message = error instanceof Error ? error.message : "Unable to delete that document.";
+    setUploadStatus(message, "error");
+    showToast(message, "error");
   }
 }
 
@@ -499,6 +653,61 @@ uploadForm.addEventListener("submit", (event) => {
   uploadDocument();
 });
 uploadFile.addEventListener("change", showSelectedFile);
+
+commandTrigger.addEventListener("click", openCommandPalette);
+commandClose.addEventListener("click", closeCommandPalette);
+themeToggle.addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+});
+commandInput.addEventListener("input", () => renderCommandResults(commandInput.value));
+commandInput.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    setCommandSelection(selectedCommandIndex + 1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    setCommandSelection(selectedCommandIndex - 1);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    activateCommand(commandItems[selectedCommandIndex]);
+  }
+});
+commandResults.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-command-index]");
+  if (!button) return;
+  activateCommand(commandItems[Number(button.dataset.commandIndex)]);
+});
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (commandPalette.open) closeCommandPalette();
+    else openCommandPalette();
+  }
+  if (event.key === "/" && !commandPalette.open && document.activeElement === document.body) {
+    event.preventDefault();
+    promptInput.focus();
+  }
+});
+commandPalette.addEventListener("click", (event) => {
+  if (event.target === commandPalette) closeCommandPalette();
+});
+confirmDialog.addEventListener("click", (event) => {
+  if (event.target === confirmDialog) confirmDialog.close("cancel");
+});
+messages.addEventListener("click", (event) => {
+  const button = event.target.closest(".onboarding-action");
+  if (!button) return;
+  if (button.dataset.command === "upload") {
+    toggleUpload(true);
+    return;
+  }
+  if (button.dataset.quickPrompt) {
+    promptInput.value = button.dataset.quickPrompt;
+    resizeComposer();
+    updateSendButton();
+    promptInput.focus();
+  }
+});
 
 ["dragenter", "dragover"].forEach((eventName) => {
   dropzone.addEventListener(eventName, (event) => {
@@ -557,6 +766,7 @@ async function refreshHealth() {
 }
 
 resizeComposer();
+applyTheme(preferredTheme(), false);
 updateSendButton();
 refreshHealth();
 loadScopes();

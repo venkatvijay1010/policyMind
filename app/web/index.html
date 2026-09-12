@@ -11,10 +11,11 @@
     <link rel="stylesheet" href="/assets/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#prompt">Skip to message composer</a>
     <div class="app-shell">
       <aside class="sidebar" aria-label="PolicyMind navigation">
         <a class="brand" href="/" aria-label="PolicyMind home">
-          <span class="brand-mark" aria-hidden="true">P</span>
+          <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M10 23V9h7.3a4.8 4.8 0 1 1 0 9.6H10" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/><path d="M22.5 22.5h.01M25 8.5h.01" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg></span>
           <span>
             <strong>PolicyMind</strong>
             <small>LOCAL RAG WORKSPACE</small>
@@ -22,7 +23,7 @@
         </a>
 
         <button class="new-chat" id="new-chat" type="button">
-          <span class="button-icon" aria-hidden="true">+</span>
+          <span class="button-icon" aria-hidden="true">&#10022;</span>
           New conversation
         </button>
 
@@ -43,7 +44,7 @@
 
             <label class="dropzone" id="dropzone" for="upload-file">
               <input id="upload-file" type="file" accept=".txt,.md,.pdf" />
-              <span class="dropzone-icon" aria-hidden="true">&#8593;</span>
+              <span class="dropzone-icon" aria-hidden="true">&#8679;</span>
               <span class="dropzone-title">Choose a document</span>
               <span class="dropzone-copy">TXT, Markdown, or PDF up to 10 MB</span>
             </label>
@@ -52,8 +53,10 @@
             <p class="upload-status" id="upload-status" role="status"></p>
           </form>
 
-          <div class="scope-list" id="scope-list" aria-live="polite">
-            <p class="library-empty">Loading your available documents...</p>
+          <div class="scope-list" id="scope-list" aria-live="polite" aria-busy="true">
+            <div class="scope-skeleton" aria-hidden="true"><span></span><span></span></div>
+            <div class="scope-skeleton" aria-hidden="true"><span></span><span></span></div>
+            <p class="sr-only">Loading your available documents...</p>
           </div>
         </section>
 
@@ -81,30 +84,39 @@
 
       <main class="chat-panel">
         <header class="chat-header">
-          <div>
-            <p class="eyebrow">Private, local-first assistant</p>
-            <h1>Chat normally. Search your documents when it matters.</h1>
-            <p class="header-copy" id="scope-summary">Normal conversation stays in chat; policy and data questions use your local sources.</p>
+          <div class="workspace-title">
+            <p class="eyebrow"><span class="live-pulse" aria-hidden="true"></span> Policy intelligence</p>
+            <h1>Ask your policies</h1>
           </div>
-          <div class="header-status">
-            <span class="provider-chip" id="provider-chip">Loading local model</span>
-            <span class="privacy-chip">Runs on your machine</span>
+          <div class="header-actions">
+            <button class="command-trigger" id="command-trigger" type="button" aria-haspopup="dialog" aria-controls="command-palette">
+              <span aria-hidden="true">&#8981;</span><span>Search</span><kbd>Ctrl K</kbd>
+            </button>
+            <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false" title="Switch theme">
+              <span class="theme-icon" aria-hidden="true">&#9789;</span>
+              <span class="sr-only theme-label">Dark</span>
+            </button>
+            <span class="sr-only" id="provider-chip" aria-live="polite">Loading local model</span>
           </div>
         </header>
 
-        <section class="messages" id="messages" aria-live="polite" aria-label="Conversation">
+        <section class="messages" id="messages" aria-live="polite" aria-busy="false" aria-label="Conversation">
           <article class="message assistant-message welcome-message">
             <div class="avatar" aria-hidden="true">P</div>
             <div class="message-content welcome-card">
-              <p class="message-label">PolicyMind</p>
+              <p class="message-label"><span class="message-presence" aria-hidden="true"></span> PolicyMind</p>
               <div class="message-body">
-                <p>I can answer from your policy documents, analyse service-case data, and show the exact passages used.</p>
-                <p class="muted">Use <strong>Upload</strong> in the left panel to add a TXT, Markdown, or text-based PDF to the local RAG index.</p>
+                <p>Ask a question, then inspect the exact policy passages used to answer it.</p>
+                <p class="muted">PolicyMind routes document, data, and hybrid questions automatically—without sending your sources away.</p>
+              </div>
+              <div class="onboarding-actions">
+                <button type="button" class="onboarding-action" data-quick-prompt="What benefit cap options are available?"><span aria-hidden="true">&#10022;</span> Explore a policy</button>
+                <button type="button" class="onboarding-action" data-command="upload"><span aria-hidden="true">&#8679;</span> Add a document</button>
               </div>
               <div class="welcome-badges">
-                <span>Local Ollama</span>
-                <span>SQLite knowledge base</span>
-                <span>Cited answers</span>
+                <span>Private by default</span>
+                <span>Hybrid retrieval</span>
+                <span>Source citations</span>
               </div>
             </div>
           </article>
@@ -123,6 +135,7 @@
               aria-describedby="composer-feedback composer-note"
               required
             ></textarea>
+            <p class="composer-context" id="scope-summary">Searching all documents with Smart retrieval.</p>
             <div class="composer-controls">
               <div class="query-options">
                 <label class="control-field">
@@ -152,8 +165,40 @@
       </main>
     </div>
 
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <dialog class="command-palette" id="command-palette" aria-labelledby="command-title">
+      <div class="command-dialog-header">
+        <div>
+          <p class="eyebrow">Command center</p>
+          <h2 id="command-title">Find anything or take action</h2>
+        </div>
+        <button class="dialog-close" id="command-close" type="button" aria-label="Close command center">&#215;</button>
+      </div>
+      <label class="sr-only" for="command-input">Search commands and documents</label>
+      <div class="command-search-wrap">
+        <span aria-hidden="true">&#8981;</span>
+        <input id="command-input" type="search" autocomplete="off" placeholder="Search actions, documents, and examples" />
+        <kbd>Esc</kbd>
+      </div>
+      <div class="command-results" id="command-results" role="listbox" aria-label="Available actions"></div>
+      <p class="command-hint"><kbd>&uarr;</kbd><kbd>&darr;</kbd> to navigate <span aria-hidden="true">&middot;</span> <kbd>Enter</kbd> to select</p>
+    </dialog>
+
+    <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-title">
+      <form method="dialog">
+        <span class="dialog-warning" aria-hidden="true">!</span>
+        <h2 id="confirm-title">Delete this document?</h2>
+        <p id="confirm-copy">This permanently removes the document and its indexed passages.</p>
+        <div class="dialog-actions">
+          <button class="dialog-button" value="cancel">Cancel</button>
+          <button class="dialog-button dialog-danger" value="confirm">Delete document</button>
+        </div>
+      </form>
+    </dialog>
+
     <template id="loading-template">
-      <article class="message assistant-message loading-message">
+      <article class="message assistant-message loading-message" role="status">
         <div class="avatar avatar-thinking" aria-hidden="true">P</div>
         <div class="message-content activity-card">
           <p class="message-label">PolicyMind is working locally</p>

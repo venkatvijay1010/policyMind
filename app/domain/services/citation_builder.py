@@ -2,6 +2,7 @@
 Citation builder for grounding answers in source documents.
 """
 
+import re
 from typing import List
 
 from app.domain.entities.models import Citation, DocumentChunk
@@ -33,7 +34,7 @@ class CitationBuilder:
             citation = Citation(
                 source_id=i,
                 contract_title=chunk.contract_title or f"Policy-{chunk.contract_id}",
-                section=chunk.topic_title,
+                section=CitationBuilder._section_label(chunk, i),
                 page=chunk.source_page,
                 chunk_text=snippet,
                 relevance_score=chunk.score or 0.0,
@@ -83,20 +84,21 @@ class CitationBuilder:
     @staticmethod
     def add_inline_citations(answer: str, citations: List[Citation]) -> str:
         """
-        Add inline citation markers to the answer.
-        This is a simple version - production would use more sophisticated matching.
+        Preserve model-provided inline markers.
+
+        The browser renders the complete, structured citation cards. Appending a
+        second plain-text source list here made answers visually repetitive and
+        separated page/section details from their evidence excerpts.
         """
-        # For now, just append a sources section
-        if not citations:
-            return answer
+        del citations
+        return answer
 
-        sources_section = "\n\n**Sources:**"
-        for i, citation in enumerate(citations, 1):
-            source_line = f"\n[{i}] {citation.contract_title}"
-            if citation.section:
-                source_line += f", {citation.section}"
-            if citation.page:
-                source_line += f" (Page {citation.page})"
-            sources_section += source_line
-
-        return answer + sources_section
+    @staticmethod
+    def _section_label(chunk: DocumentChunk, fallback_index: int) -> str:
+        """Use persisted metadata, then recover a Markdown section for legacy chunks."""
+        if chunk.topic_title:
+            return chunk.topic_title
+        heading = re.search(r"^\s*#{2,6}\s+(.+?)\s*#*\s*$", chunk.content, re.MULTILINE)
+        if heading:
+            return heading.group(1).strip()
+        return f"Policy passage {chunk.passage_order + 1 if chunk.passage_order is not None else fallback_index}"
