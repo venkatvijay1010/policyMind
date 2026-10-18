@@ -74,6 +74,140 @@ class TestHealthEndpoints:
 class TestAskEndpoints:
     """Tests for ask/query endpoints."""
 
+    @pytest.mark.parametrize("endpoint", ["query", "query/stream", "route-preview"])
+    async def test_semantic_clarification_response(self, mock_db, endpoint):
+        from app.domain.entities.models import ClassificationResult
+        from app.infrastructure.database.postgres import get_db_session
+        from app.main import app
+
+        async def override_session():
+            yield mock_db
+
+        decision = ClassificationResult(
+            query_type=None,
+            decision="clarify",
+            reasoning="Benefit is unspecified.",
+            clarification_question="Which benefit do you mean?",
+        )
+        app.dependency_overrides[get_db_session] = override_session
+        try:
+            with (
+                patch(
+                    "app.application.agents.query_classifier.QueryClassifier.classify",
+                    new=AsyncMock(return_value=decision),
+                ),
+                patch("app.api.routes.ask.log_query_background", new_callable=AsyncMock),
+            ):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.post(
+                        f"/api/v2/insights/{endpoint}", json={"prompt": "What is its limit?"}
+                    )
+            assert response.status_code == 200
+            if endpoint == "route-preview":
+                assert response.json()["decision"] == "clarify"
+                assert response.json()["query_type"] is None
+                assert response.json()["confidence"] is None
+            elif endpoint == "query/stream":
+                assert '"query_type": "clarification"' in response.text
+                assert "event: result" in response.text
+                assert "Searching your documents" not in response.text
+            else:
+                assert response.json()["query_type"] == "clarification"
+                assert response.json()["answer"] == "Which benefit do you mean?"
+        finally:
+            app.dependency_overrides.pop(get_db_session, None)
+
+    @pytest.mark.parametrize("endpoint", ["query", "query/stream", "route-preview"])
+    async def test_routing_unavailable_is_explicit(self, mock_db, endpoint):
+        from app.application.agents.query_classifier import RoutingError
+        from app.infrastructure.database.postgres import get_db_session
+        from app.main import app
+
+        async def override_session():
+            yield mock_db
+
+        app.dependency_overrides[get_db_session] = override_session
+        try:
+            with patch(
+                "app.application.agents.query_classifier.QueryClassifier.classify",
+                new=AsyncMock(side_effect=RoutingError("routing_unavailable")),
+            ):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.post(
+                        f"/api/v2/insights/{endpoint}", json={"prompt": "Count declined cases"}
+                    )
+            if endpoint == "query/stream":
+                assert "event: error" in response.text
+                assert "routing_unavailable" in response.text
+                assert "event: result" not in response.text
+                assert "Searching your documents" not in response.text
+            else:
+                assert response.status_code == 503
+                assert response.headers["x-error-code"] == "routing_unavailable"
+        finally:
+            app.dependency_overrides.pop(get_db_session, None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failed", [False, True])
+    async def test_sse_only_emits_finalized_results(self, mock_db, failed):
+        from app.domain.entities.models import QueryResult, QueryType
+        from app.infrastructure.database.postgres import get_db_session
+        from app.main import app
+
+        result = QueryResult("hi", QueryType.CHAT, "Hello", latency_ms=12, model_used="test")
+
+        async def events(**kwargs):
+            yield {"classify": {"query_type": QueryType.CHAT}}
+            yield {"chat": {"result": result}}
+            if failed:
+                yield {"finalize": {"result": None}}
+                yield {"failure": {"error_code": "invalid_citations"}}
+            else:
+                yield {"finalize": {"result": result}}
+
+        async def override_session():
+            yield mock_db
+
+        app.dependency_overrides[get_db_session] = override_session
+        try:
+            with (
+                patch("app.api.routes.ask.PolicyMindGraph") as graph_class,
+                patch("app.api.routes.ask.log_query_background", new_callable=AsyncMock),
+            ):
+                graph_class.return_value.stream = events
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.post(
+                        "/api/v2/insights/query/stream", json={"prompt": "hi"}
+                    )
+            assert response.headers["content-type"].startswith("text/event-stream")
+            assert "event: status" in response.text
+            if failed:
+                assert "event: error" in response.text
+                assert "invalid_citations" in response.text
+                assert "event: result" not in response.text
+            else:
+                assert "event: result" in response.text
+                assert '"answer": "Hello"' in response.text
+        finally:
+            app.dependency_overrides.pop(get_db_session, None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("endpoint", ["query", "query/stream"])
+    async def test_invalid_scope_is_rejected(self, endpoint):
+        from app.main import app
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                f"/api/v2/insights/{endpoint}", json={"prompt": "hi", "scope_key": -1}
+            )
+        assert response.status_code == 422
+
     @pytest.mark.asyncio
     async def test_ask_endpoint_validation(self):
         """Test request validation on ask endpoint."""

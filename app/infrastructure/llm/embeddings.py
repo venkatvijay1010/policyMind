@@ -3,8 +3,8 @@
 from typing import List, Optional, cast
 
 import structlog
-from openai import AsyncOpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
+from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLimitError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
 
@@ -18,11 +18,18 @@ class EmbeddingService:
         self.client = AsyncOpenAI(
             api_key=settings.llm_api_key,
             base_url=settings.llm_base_url,
+            timeout=settings.node_timeout_seconds,
+            max_retries=0,
         )
         self.model = settings.embedding_model
         self.dimension = settings.embedding_dimension
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((APIConnectionError, InternalServerError, RateLimitError)),
+        reraise=True,
+    )
     async def embed_text(self, text: str) -> List[float]:
         """
         Generate embedding for a single text.
@@ -33,7 +40,12 @@ class EmbeddingService:
 
         return cast(List[float], response.data[0].embedding)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((APIConnectionError, InternalServerError, RateLimitError)),
+        reraise=True,
+    )
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """
         Generate embeddings for multiple texts.

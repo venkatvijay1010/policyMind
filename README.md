@@ -58,6 +58,93 @@ PolicyMind is an AI-powered assistant that helps users understand insurance bene
 
 ## 🚀 Quick Start
 
+### Query Safety and Production Boundaries
+
+The read-only query graph includes explicit `retry`, `finalize`, and `failure`
+nodes. Successful answers are published only after finalization, including on the
+SSE endpoint. Cancellation propagates without retries. Classification uses a
+validated semantic decision, not keyword matching. Missing intent produces a
+clarification question without calling agents. Invalid or unavailable routing
+fails closed instead of silently choosing document QA.
+
+| Safeguard | Implementation |
+| --- | --- |
+| Request validation | Pydantic checks prompt, conversation, retrieval strategy and positive scope IDs. |
+| Retries | LLM/embedding clients retry transient provider errors up to three attempts; the graph permits a bounded additional execution retry. SQL has up to two self-correction retries. |
+| Deadlines | Total query, per-node and SQL execution deadlines apply to normal and streamed requests. PostgreSQL also receives a local statement timeout. |
+| SQL safety | SQLGlot parses one read-only statement; mutations, locks, recursive CTEs, unapproved tables and unapproved functions are rejected. Results are capped at 100 rows and failures roll back a savepoint. |
+| Retrieval checks | Empty/blank evidence and out-of-scope passages are discarded. Weak cosine candidates are removed before hybrid fusion; RRF scores are not treated as cosine similarity. |
+| Citation checks | Source markers must reference supplied nonempty citations. Invalid RAG citations fall back to source excerpts; hybrid synthesis falls back to its component answers. Empty retrieval abstains without an LLM call. |
+| Search fallback | Embedding connection failures can fall back to lexical search. |
+| Observability | Structured logs include request IDs, node durations, attempts, final latency and failure codes; existing query logs retain query-level analytics. No external metrics exporter is configured. |
+| Structured errors | The graph carries failure codes. Normal HTTP query failures use 502/503/504 with `X-Error-Code`; failures after SSE starts use an `error` event because the HTTP response has already begun. |
+| Sensitive actions | The query graph cannot perform writes. There is no human-approval workflow; adding sensitive actions requires authenticated approvers, durable pending-action storage, audit records and an execution-time authorization check. |
+
+Execution limits can be configured with `QUERY_TIMEOUT_SECONDS` (180),
+`NODE_TIMEOUT_SECONDS` (90), `SQL_TIMEOUT_SECONDS` (10), and
+`GRAPH_MAX_RETRIES` (1). Similarity filtering uses `SIMILARITY_THRESHOLD` (0.7).
+These defaults need calibration against deployment latency and retrieval evaluation.
+
+### Semantic Routing
+
+Every question is classified by required evidence, with up to ten recent conversation
+turns for context. `chat` needs neither private source, `document_qa` needs policy
+documents, `records_sql` needs observed records, and `hybrid` needs both. For example,
+"How many days is the waiting period?" needs documents, not SQL. The router can also
+return `clarify` when a necessary referent is missing. Normal and SSE query responses
+then use `query_type: "clarification"`; the existing browser renders the question as
+an assistant response. Its next request includes that turn in conversation history.
+
+The plan's standalone `resolved_query` is passed to the selected agent for follow-ups;
+the public response still echoes the original prompt. The plan cannot change document
+scope, database permissions, SQL allowlists, or tool implementations. History and
+rewritten questions remain untrusted, not authorization or verified evidence.
+
+Pydantic validates required fields, strict boolean flags, supported routes, and
+consistent evidence requirements. One malformed response can trigger a corrected
+model request; repeated invalid output produces `invalid_routing`. Provider failures
+or routing timeouts produce `routing_unavailable`, never an invented document route.
+The entire routing operation, including provider retries, is bounded by
+`ROUTING_TIMEOUT_SECONDS` (30 by default). Tune this for the selected local model.
+
+`ROUTING_OUTPUT_MODE=json_object` is the compatibility default; the schema is included
+in the prompt and validated locally. Set `ROUTING_OUTPUT_MODE=json_schema` only with
+a provider/model that supports strict OpenAI-compatible JSON Schema responses. It
+does not silently downgrade unsupported schema requests. No model confidence is
+treated as a probability; the legacy preview `confidence` field is now null.
+`POST /api/v2/insights/route-preview` exposes the decision, capabilities, resolved
+query and clarification question. Routing logs include policy version `evidence-v1`,
+duration and validation-attempt count.
+
+Contract tests mock model responses; they verify enforcement, not semantic accuracy.
+An opt-in live-model smoke evaluation covers misleading vocabulary, all four routes,
+clarification and conversational follow-ups. It uses the configured provider and may
+incur API charges if configured for a remote model:
+
+```powershell
+$env:RUN_ROUTING_EVAL = "1"
+python -m pytest tests/unit/test_query_classifier.py -k live -v
+Remove-Item Env:RUN_ROUTING_EVAL
+```
+
+This small smoke set is not a production accuracy benchmark. Expand it with reviewed
+domain questions, paraphrases, multilingual input and adversarial requests; measure
+per-route errors, clarification rate, invalid-output rate, latency and provider
+failures before rollout or a model/prompt change. Budget the extra routing model call
+for every request; no keyword fast path or cross-user routing cache is used.
+
+This is not a certification for production handling of real insurance data.
+Citation integrity does not prove that every claim follows from the cited evidence.
+Use a restricted, SELECT-only database role for generated SQL, restrict function
+execution grants, and configure server-side resource limits. SQLite cancellation
+does not guarantee immediate termination of work in its database worker thread;
+the server-side SQL timeout branch requires deployment verification on PostgreSQL.
+Document scope selection is not tenant authorization, and query safeguards do not
+authorize ingestion or deletion endpoints. Before exposing real data, add application
+authentication/authorization, tenant isolation, privacy-aware logging, external
+metrics/tracing, and load/failure testing. No writes or approval bypass are enabled
+by this hardening change.
+
 ### Prerequisites
 
 - Python 3.11+

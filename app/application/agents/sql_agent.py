@@ -2,12 +2,16 @@
 SQL Agent - handles service_cases data queries with self-correction.
 """
 
+import asyncio
 import re
 from typing import Any, List, Optional, cast
 
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlglot import exp, parse
+from sqlglot.errors import SqlglotError
+from sqlglot.optimizer.scope import traverse_scope
 
 from app.config import settings
 from app.domain.entities.models import QueryResult, QueryType
@@ -97,6 +101,30 @@ _LOCKING_CLAUSE = re.compile(
     r"\bfor\s+(?:no\s+key\s+update|key\s+share|share|update)\b", re.IGNORECASE
 )
 _SELECT_INTO = re.compile(r"\bselect\b[\s\S]*\binto\b", re.IGNORECASE)
+_ALLOWED_TABLES = {"service_cases", "participants", "benefit_contracts", "icd_codes"}
+_ALLOWED_FUNCTIONS = {
+    "COUNT",
+    "SUM",
+    "AVG",
+    "MIN",
+    "MAX",
+    "ABS",
+    "ROUND",
+    "COALESCE",
+    "NULLIF",
+    "LOWER",
+    "UPPER",
+    "LENGTH",
+    "CAST",
+    "EXTRACT",
+    "DATE",
+    "DATE_TRUNC",
+    "STRFTIME",
+    "CURRENT_DATE",
+    "CURRENT_TIMESTAMP",
+    "CASE",
+    "IF",
+}
 
 
 class SQLAgent:
@@ -142,6 +170,34 @@ class SQLAgent:
         if _LOCKING_CLAUSE.search(normalized_sql) or _SELECT_INTO.search(normalized_sql):
             return None
 
+        try:
+            statements = parse(normalized_sql, read="postgres")
+            if len(statements) != 1 or not isinstance(statements[0], (exp.Select, exp.Union)):
+                return None
+            statement = statements[0]
+            if any(
+                isinstance(node, (exp.DML, exp.DDL, exp.Command, exp.Into, exp.Lock))
+                for node in statement.walk()
+            ):
+                return None
+            if any(node.args.get("recursive") for node in statement.find_all(exp.With)):
+                return None
+            for scope in traverse_scope(statement):
+                for table in scope.tables:
+                    source = scope.sources.get(table.alias_or_name)
+                    if not isinstance(source, exp.Table):
+                        continue
+                    if not isinstance(source.this, exp.Identifier) or source.db or source.catalog:
+                        return None
+                    if source.name.lower() not in _ALLOWED_TABLES:
+                        return None
+            for function in statement.find_all(exp.Func):
+                name = function.name if isinstance(function, exp.Anonymous) else function.sql_name()
+                if name.upper() not in _ALLOWED_FUNCTIONS:
+                    return None
+        except SqlglotError:
+            return None
+
         return normalized_sql
 
     def _is_safe_sql(self, sql: str) -> bool:
@@ -164,15 +220,27 @@ class SQLAgent:
         """
         normalized_sql = self._normalize_read_only_sql(sql)
         if normalized_sql is None:
-            return [], "Query rejected: Only SELECT queries are allowed"
+            return [], "Query rejected: Only approved read-only queries are allowed"
 
         try:
             # An outer cap also bounds LLM-provided LIMIT values without trying to
             # rewrite the generated statement's syntax.
             bounded_sql = f"SELECT * FROM ({normalized_sql}) AS generated_query LIMIT :max_rows"
-            result = await self.session.execute(text(bounded_sql), {"max_rows": self.MAX_ROWS})
-            rows = result.fetchall()
-            columns = result.keys()
+            async with asyncio.timeout(settings.sql_timeout_seconds):
+                async with self.session.begin_nested():
+                    if (
+                        self.session.bind is not None
+                        and self.session.bind.dialect.name == "postgresql"
+                    ):
+                        timeout_ms = max(1, int(settings.sql_timeout_seconds * 1000))
+                        await self.session.execute(
+                            text(f"SET LOCAL statement_timeout = {timeout_ms}")
+                        )
+                    result = await self.session.execute(
+                        text(bounded_sql), {"max_rows": self.MAX_ROWS}
+                    )
+                    rows = result.fetchall()
+                    columns = result.keys()
 
             # Convert to list of dicts
             data = [dict(zip(columns, row)) for row in rows]
@@ -245,6 +313,7 @@ If no results were found, explain what that means."""
 
             if error is None:
                 # Success
+                last_error = None
                 break
             else:
                 last_error = error

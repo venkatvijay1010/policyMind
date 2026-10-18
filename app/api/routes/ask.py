@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from time import perf_counter
 from typing import Any, AsyncGenerator
 
 import structlog
@@ -15,7 +16,8 @@ from app.api.schemas.schemas import (
     InsightQueryResponse,
     QueryTypeEnum,
 )
-from app.application.graph.orchestrator import PolicyMindGraph
+from app.application.agents.query_classifier import RoutingError
+from app.application.graph.orchestrator import GraphExecutionError, PolicyMindGraph
 from app.config import settings
 from app.domain.entities.models import QueryType
 from app.infrastructure.database.postgres import get_db_session
@@ -46,6 +48,8 @@ def _route_status(query_type: QueryType) -> tuple[str, str]:
     """Return concise, user-facing progress copy for the selected path."""
     if query_type == QueryType.CHAT:
         return "chatting", "Writing a response"
+    if query_type == QueryType.CLARIFICATION:
+        return "understanding", "Clarifying your question"
     if query_type == QueryType.RECORDS_SQL:
         return "retrieving", "Analyzing service-case data"
     if query_type == QueryType.HYBRID:
@@ -71,6 +75,7 @@ def _to_insight_response(result) -> InsightQueryResponse:
         QueryType.DOCUMENT_QA: QueryTypeEnum.document_qa,
         QueryType.RECORDS_SQL: QueryTypeEnum.records_sql,
         QueryType.HYBRID: QueryTypeEnum.hybrid,
+        QueryType.CLARIFICATION: QueryTypeEnum.clarification,
     }
     return InsightQueryResponse(
         prompt=result.query,
@@ -95,6 +100,7 @@ async def _stream_insight(
 ) -> AsyncGenerator[str, None]:
     """Run an insight query while publishing useful local-work status updates."""
     graph = PolicyMindGraph(db)
+    started = perf_counter()
     conversation = _conversation_turns(insight_request)
     yield _sse(
         "status",
@@ -115,16 +121,39 @@ async def _stream_insight(
         ):
             for node_name, update in event.items():
                 if node_name == "classify":
-                    query_type = update.get("query_type", QueryType.DOCUMENT_QA)
+                    if update.get("error_code"):
+                        continue
+                    classification = update.get("classification")
+                    query_type = update.get("query_type")
+                    if classification is not None and classification.decision == "clarify":
+                        query_type = QueryType.CLARIFICATION
                     if not isinstance(query_type, QueryType):
-                        query_type = QueryType.DOCUMENT_QA
+                        continue
                     stage, message = _route_status(query_type)
                     yield _sse(
                         "status",
-                        {"stage": stage, "message": message, "elapsed_ms": 0},
+                        {
+                            "stage": stage,
+                            "message": message,
+                            "elapsed_ms": int((perf_counter() - started) * 1000),
+                        },
                     )
-                elif node_name in {"chat", "rag", "sql", "hybrid"}:
+                elif node_name == "retry":
+                    yield _sse(
+                        "status",
+                        {
+                            "stage": "retrieving",
+                            "message": "Retrying a temporary failure",
+                            "elapsed_ms": int((perf_counter() - started) * 1000),
+                        },
+                    )
+                elif node_name == "finalize":
                     result = update.get("result")
+                elif node_name == "failure":
+                    result = None
+                    raise GraphExecutionError(
+                        update.get("error_code") or "execution_failed", "Query execution failed."
+                    )
 
         if result is None:
             raise RuntimeError("The local routing graph ended without a result.")
@@ -140,7 +169,13 @@ async def _stream_insight(
         logger.exception(
             "Streaming query failed", error=str(exc), prompt=insight_request.prompt[:100]
         )
-        yield _sse("error", {"detail": "Unable to process that question locally."})
+        yield _sse(
+            "error",
+            {
+                "detail": "Unable to process that question locally.",
+                "code": exc.code if isinstance(exc, GraphExecutionError) else "execution_failed",
+            },
+        )
 
 
 async def log_query_background(query: str, query_type: str, latency_ms: int):
@@ -184,6 +219,7 @@ async def create_insight(
     - **document_qa**: Questions about policy terms, coverage, exclusions
     - **records_sql**: Questions about synthetic service-case data, statistics, and trends
     - **hybrid**: Questions needing both policy context and data analysis
+    - **clarification**: A question to resolve missing intent, without querying tools
 
     **Examples:**
     - "What is the maternity coverage limit?" → document_qa
@@ -212,6 +248,14 @@ async def create_insight(
         )
         return _to_insight_response(result)
 
+    except GraphExecutionError as exc:
+        raise HTTPException(
+            status_code=503
+            if exc.code == "routing_unavailable"
+            else (504 if exc.code in {"query_timeout", "node_timeout"} else 502),
+            detail="Unable to process the query",
+            headers={"X-Error-Code": exc.code},
+        ) from exc
     except Exception as exc:
         logger.exception("Query failed", error=str(exc), prompt=insight_request.prompt[:100])
         raise HTTPException(
@@ -249,13 +293,27 @@ async def classify_only(
     from app.application.agents.query_classifier import QueryClassifier
 
     classifier = QueryClassifier()
-    result = await classifier.classify(insight_request.prompt, _conversation_turns(insight_request))
+    try:
+        result = await classifier.classify(
+            insight_request.prompt, _conversation_turns(insight_request)
+        )
+    except RoutingError as exc:
+        raise HTTPException(
+            status_code=503 if exc.code == "routing_unavailable" else 502,
+            detail="Unable to determine the required query tools.",
+            headers={"X-Error-Code": exc.code},
+        ) from exc
 
     return {
         "prompt": insight_request.prompt,
-        "query_type": result.query_type.value,
+        "query_type": result.query_type.value if result.query_type else None,
         "confidence": result.confidence,
         "reasoning": result.reasoning,
+        "decision": result.decision,
+        "needs_documents": result.needs_documents,
+        "needs_records": result.needs_records,
+        "resolved_query": result.resolved_query,
+        "clarification_question": result.clarification_question,
     }
 
 

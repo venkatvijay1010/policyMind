@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     similarity_threshold: float = 0.7
 
     # Rate limiting
+    query_timeout_seconds: float = Field(default=180.0, gt=0, le=900)
+    routing_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    routing_output_mode: Literal["json_object", "json_schema"] = "json_object"
+    node_timeout_seconds: float = Field(default=90.0, gt=0, le=600)
+    graph_max_retries: int = Field(default=1, ge=0, le=3)
+    sql_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+
     rate_limit: str = "60/minute"
     rate_limit_storage_uri: str = "memory://"
 

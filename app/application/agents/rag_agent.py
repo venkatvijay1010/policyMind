@@ -5,6 +5,7 @@ RAG Agent - handles document Q&A with retrieval.
 from typing import List, Optional
 
 import structlog
+from openai import APIConnectionError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -48,11 +49,25 @@ class RAGAgent:
         Retrieve relevant document chunks.
         """
         effective_top_k = top_k if top_k is not None else settings.top_k_retrieval
-        results = await self.search.search(
-            query=query, contract_id=contract_id, top_k=effective_top_k, method=search_method
-        )
+        try:
+            results = await self.search.search(
+                query=query, contract_id=contract_id, top_k=effective_top_k, method=search_method
+            )
+        except (APIConnectionError, ConnectionError, TimeoutError):
+            if search_method == "bm25":
+                raise
+            logger.warning("Embedding search unavailable; using lexical fallback")
+            search_method = "bm25"
+            results = await self.search.bm25_search(query, contract_id, effective_top_k)
 
-        chunks = [r.chunk for r in results]
+        chunks = [
+            result.chunk
+            for result in results
+            if result.chunk.content.strip()
+            and (contract_id is None or result.chunk.contract_id == contract_id)
+            and result.score > 0
+            and (search_method != "vector" or result.score >= settings.similarity_threshold)
+        ]
 
         logger.info(
             "Retrieved chunks", query=query[:100], num_chunks=len(chunks), method=search_method
@@ -127,6 +142,15 @@ Format your answer clearly and professionally."""
 
         chunks = retrieval_result.chunks
 
+        if not chunks:
+            return QueryResult(
+                query=query,
+                query_type=QueryType.DOCUMENT_QA,
+                answer="I don't have sufficient relevant evidence in the provided policy documents to answer this question.",
+                latency_ms=int((time.time() - start_time) * 1000),
+                model_used=settings.chat_model,
+            )
+
         # 2. Generate answer
         answer = await self.generate_answer(query, chunks)
 
@@ -135,6 +159,11 @@ Format your answer clearly and professionally."""
 
         # 4. Add inline citations to answer
         answer_with_sources = self.citation_builder.add_inline_citations(answer, citations)
+        if not self.citation_builder.validate_answer(answer_with_sources, citations):
+            logger.warning("Invalid model citations; returning source excerpts")
+            answer_with_sources = "\n\n".join(
+                f"{chunk.content} [Source {index}]" for index, chunk in enumerate(chunks, 1)
+            )
 
         latency_ms = int((time.time() - start_time) * 1000)
 

@@ -11,6 +11,7 @@ from app.application.agents.rag_agent import RAGAgent
 from app.application.agents.sql_agent import SQLAgent
 from app.config import settings
 from app.domain.entities.models import Citation, QueryResult, QueryType
+from app.domain.services.citation_builder import CitationBuilder
 from app.infrastructure.llm.openai_client import get_openai_client
 
 logger = structlog.get_logger()
@@ -153,6 +154,8 @@ Please synthesize this into a single, coherent answer that:
         final_answer = await self._synthesize_answer(
             original_query=query, doc_answer=doc_answer, sql_answer=sql_answer
         )
+        if all_citations and not CitationBuilder.validate_answer(final_answer, all_citations):
+            final_answer = "\n\n".join(part for part in (doc_answer, sql_answer) if part)
 
         latency_ms = int((time.time() - start_time) * 1000)
 

@@ -16,6 +16,7 @@ class QueryTypeEnum(str, Enum):
     records_sql = "records_sql"
     hybrid = "hybrid"
     chat = "chat"
+    clarification = "clarification"
 
 
 class RetrievalStrategyEnum(str, Enum):
@@ -48,7 +49,9 @@ class InsightQueryRequest(BaseModel):
     prompt: str = Field(
         ..., min_length=1, max_length=1000, description="Message or question to answer"
     )
-    scope_key: Optional[int] = Field(None, description="Optional synthetic knowledge-scope key")
+    scope_key: Optional[int] = Field(
+        None, gt=0, description="Optional synthetic knowledge-scope key"
+    )
     retrieval_strategy: RetrievalStrategyEnum = Field(
         RetrievalStrategyEnum.blended,
         description="Retrieval strategy: semantic, lexical, or blended",
@@ -56,7 +59,7 @@ class InsightQueryRequest(BaseModel):
     conversation: List[ConversationMessage] = Field(
         default_factory=list,
         max_length=10,
-        description="Recent browser-chat turns used only for routing and normal conversation",
+        description="Recent chat turns used to resolve follow-ups and route the latest request",
     )
 
     model_config = {

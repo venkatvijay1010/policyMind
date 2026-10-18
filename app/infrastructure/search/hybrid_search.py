@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.domain.entities.models import DocumentChunk, SectionType
 from app.infrastructure.database.models import ContractPassage
 from app.infrastructure.llm.embeddings import get_embedding_service
@@ -187,6 +188,9 @@ class HybridSearch:
         """
         # Get results from both methods
         vector_results = await self.vector_search(query, contract_id, top_k=top_k * 2)
+        vector_results = [
+            result for result in vector_results if result.score >= settings.similarity_threshold
+        ]
         bm25_results = await self.bm25_search(query, contract_id, top_k=top_k * 2)
 
         logger.debug(

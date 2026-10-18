@@ -27,6 +27,7 @@ dependencies = [
     
     # Database
     "sqlalchemy>=2.0.25",
+    "sqlglot>=26.0,<31",
     "aiosqlite>=0.20.0",
     
     # AI/LLM

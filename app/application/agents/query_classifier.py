@@ -2,12 +2,72 @@
 Query classifier agent - routes queries to appropriate handler.
 """
 
-import structlog
+import asyncio
+from time import perf_counter
+from typing import Literal
 
+import structlog
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.config import settings
 from app.domain.entities.models import ClassificationResult, QueryType
-from app.infrastructure.llm.openai_client import get_openai_client
+from app.infrastructure.llm.openai_client import ROUTING_POLICY_VERSION, get_openai_client
 
 logger = structlog.get_logger()
+
+
+class RoutingError(RuntimeError):
+    def __init__(self, code: str):
+        super().__init__("Unable to determine the required query tools.")
+        self.code = code
+
+
+class RoutingDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    decision: Literal["route", "clarify"]
+    query_type: Literal["chat", "document_qa", "records_sql", "hybrid"] | None
+    needs_documents: bool
+    needs_records: bool
+    reason: str = Field(min_length=1, max_length=1000)
+    resolved_query: str | None = Field(max_length=2000)
+    clarification_question: str | None = Field(max_length=500)
+
+    @field_validator("reason", "resolved_query", "clarification_question")
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        if value is not None:
+            value = value.strip()
+            if not value:
+                raise ValueError("Routing text cannot be blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "RoutingDecision":
+        if self.decision == "clarify":
+            if (
+                self.query_type is not None
+                or self.needs_documents
+                or self.needs_records
+                or self.resolved_query is not None
+                or self.clarification_question is None
+            ):
+                raise ValueError("Clarification must ask a question without selecting tools")
+        else:
+            capabilities = {
+                "chat": (False, False),
+                "document_qa": (True, False),
+                "records_sql": (False, True),
+                "hybrid": (True, True),
+            }
+            if self.query_type is None or capabilities[self.query_type] != (
+                self.needs_documents,
+                self.needs_records,
+            ):
+                raise ValueError("Route does not match the required evidence")
+            if self.resolved_query is None or self.clarification_question is not None:
+                raise ValueError("Routing requires a standalone question, not a clarification")
+        return self
 
 
 class QueryClassifier:
@@ -23,105 +83,58 @@ class QueryClassifier:
     def __init__(self):
         self.llm = get_openai_client()
 
-        # Keywords that suggest SQL queries
-        self.sql_keywords = {
-            "how many",
-            "total",
-            "count",
-            "sum",
-            "average",
-            "avg",
-            "service case",
-            "service_cases",
-            "requested amount",
-            "statistics",
-            "trend",
-            "in 2024",
-            "in 2023",
-            "last year",
-            "this quarter",
-            "by status",
-            "by provider",
-            "top 10",
-            "breakdown",
-        }
-
-        # Keywords that suggest document queries
-        self.doc_keywords = {
-            "covered",
-            "coverage",
-            "exclusion",
-            "excluded",
-            "eligibility delay",
-            "waiting period",
-            "limit",
-            "inner cap",
-            "fixed share",
-            "percentage share",
-            "contract terms",
-            "conditions",
-            "eligibility",
-            "pre-existing",
-            "documents required",
-            "service-case process",
-        }
-
     async def classify(
         self,
         query: str,
         conversation: list[dict[str, str]] | None = None,
     ) -> ClassificationResult:
-        """
-        Classify the query type.
-        Uses a combination of keyword matching and LLM classification.
-        """
-        query_lower = query.lower()
-
-        # Quick keyword-based classification
-        sql_score = sum(1 for kw in self.sql_keywords if kw in query_lower)
-        doc_score = sum(1 for kw in self.doc_keywords if kw in query_lower)
-
-        logger.debug(
-            "Keyword classification scores",
-            query=query[:100],
-            sql_score=sql_score,
-            doc_score=doc_score,
-        )
-
-        # If keywords are clear, skip LLM call
-        if sql_score > 0 and doc_score == 0:
-            return ClassificationResult(
-                query_type=QueryType.RECORDS_SQL,
-                confidence=0.9,
-                reasoning="Query contains service_cases/statistics keywords",
-            )
-
-        if doc_score > 0 and sql_score == 0:
-            return ClassificationResult(
-                query_type=QueryType.DOCUMENT_QA,
-                confidence=0.9,
-                reasoning="Query contains policy/coverage keywords",
-            )
-
-        # Ambiguous - use LLM
+        """Select evidence semantically and reject invalid or unavailable routing."""
+        started = perf_counter()
         try:
-            result = await self.llm.classify_query(query, conversation or [])
-
-            query_type = QueryType(result.get("query_type", "document_qa"))
-            confidence = float(result.get("confidence", 0.8))
-            reasoning = result.get("reasoning", "")
-
-            return ClassificationResult(
-                query_type=query_type, confidence=confidence, reasoning=reasoning
-            )
-        except Exception as e:
-            logger.error("LLM classification failed", error=str(e))
-            # Default to document_qa on failure
-            return ClassificationResult(
-                query_type=QueryType.DOCUMENT_QA,
-                confidence=0.5,
-                reasoning="Fallback due to classification error",
-            )
+            async with asyncio.timeout(settings.routing_timeout_seconds):
+                for attempt in range(2):
+                    try:
+                        result = await self.llm.classify_query(
+                            query,
+                            conversation or [],
+                            response_schema=RoutingDecision.model_json_schema(),
+                            validation_retry=attempt > 0,
+                        )
+                        decision = RoutingDecision.model_validate(result)
+                    except ValueError as exc:
+                        logger.warning(
+                            "Invalid routing decision",
+                            attempt=attempt + 1,
+                            error_type=type(exc).__name__,
+                        )
+                        if attempt == 1:
+                            raise RoutingError("invalid_routing") from exc
+                        continue
+                    logger.info(
+                        "Semantic routing decision",
+                        policy_version=ROUTING_POLICY_VERSION,
+                        decision=decision.decision,
+                        query_type=decision.query_type,
+                        needs_documents=decision.needs_documents,
+                        needs_records=decision.needs_records,
+                        duration_ms=int((perf_counter() - started) * 1000),
+                        attempt=attempt + 1,
+                    )
+                    return ClassificationResult(
+                        query_type=QueryType(decision.query_type) if decision.query_type else None,
+                        reasoning=decision.reason,
+                        decision=decision.decision,
+                        needs_documents=decision.needs_documents,
+                        needs_records=decision.needs_records,
+                        resolved_query=decision.resolved_query,
+                        clarification_question=decision.clarification_question,
+                    )
+        except RoutingError:
+            raise
+        except Exception as exc:
+            logger.warning("Semantic routing unavailable", error_type=type(exc).__name__)
+            raise RoutingError("routing_unavailable") from exc
+        raise RoutingError("invalid_routing")
 
     def is_sql_safe(self, query: str) -> bool:
         """

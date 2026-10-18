@@ -17,6 +17,17 @@ class CitationBuilder:
     """
 
     @staticmethod
+    def validate_answer(answer: str, citations: List[Citation]) -> bool:
+        source_ids = {citation.source_id for citation in citations}
+        markers = re.findall(r"\[Source\s+(\d+)\]", answer, flags=re.IGNORECASE)
+        return (
+            bool(markers)
+            and len(source_ids) == len(citations)
+            and all(int(marker) in source_ids for marker in markers)
+            and all(citation.chunk_text.strip() for citation in citations)
+        )
+
+    @staticmethod
     def build_citations(
         chunks: List[DocumentChunk], max_snippet_length: int = 200
     ) -> List[Citation]:

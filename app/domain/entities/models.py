@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 
 class QueryType(str, Enum):
@@ -16,6 +16,7 @@ class QueryType(str, Enum):
     DOCUMENT_QA = "document_qa"
     RECORDS_SQL = "records_sql"
     HYBRID = "hybrid"
+    CLARIFICATION = "clarification"
     UNKNOWN = "unknown"
 
 
@@ -124,9 +125,14 @@ class RetrievalResult:
 class ClassificationResult:
     """Result of query classification."""
 
-    query_type: QueryType
-    confidence: float
+    query_type: Optional[QueryType]
+    confidence: Optional[float] = None
     reasoning: Optional[str] = None
+    decision: Literal["route", "clarify"] = "route"
+    needs_documents: bool = False
+    needs_records: bool = False
+    resolved_query: Optional[str] = None
+    clarification_question: Optional[str] = None
 
 
 @dataclass
