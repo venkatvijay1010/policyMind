@@ -60,12 +60,11 @@ def _section_at_offset(text_content: str, offset: int, chunk_end: int) -> str | 
             stripped = line.strip()
             markdown_match = _MARKDOWN_HEADING.match(stripped)
             uppercase_match = _UPPERCASE_HEADING.match(stripped)
-            if offset <= cursor < chunk_end and (
-                (markdown_match and not stripped.startswith("# ")) or uppercase_match
-            ):
-                if markdown_match:
+            if offset <= cursor < chunk_end:
+                if markdown_match and not stripped.startswith("# "):
                     return markdown_match.group(1).strip()
-                return uppercase_match.group(1).strip().title()
+                if uppercase_match:
+                    return uppercase_match.group(1).strip().title()
             cursor += len(line)
     return section
 
