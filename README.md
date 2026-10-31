@@ -74,6 +74,7 @@ fails closed instead of silently choosing document QA.
 | Deadlines | Total query, per-node and SQL execution deadlines apply to normal and streamed requests. PostgreSQL also receives a local statement timeout. |
 | SQL safety | SQLGlot parses one read-only statement; mutations, locks, recursive CTEs, unapproved tables and unapproved functions are rejected. Results are capped at 100 rows and failures roll back a savepoint. |
 | Retrieval checks | Empty/blank evidence and out-of-scope passages are discarded. Weak cosine candidates are removed before hybrid fusion; RRF scores are not treated as cosine similarity. |
+| Context selection | A bounded candidate pool is locally reranked by query-term coverage while preserving the original search order as a signal. The highest-ranked whole chunks are sent to the LLM within `MAX_CONTEXT_CHARS`. |
 | Citation checks | Source markers must reference supplied nonempty citations. Invalid RAG citations fall back to source excerpts; hybrid synthesis falls back to its component answers. Empty retrieval abstains without an LLM call. |
 | Search fallback | Embedding connection failures can fall back to lexical search. |
 | Observability | Structured logs include request IDs, node durations, attempts, final latency and failure codes; existing query logs retain query-level analytics. No external metrics exporter is configured. |
@@ -360,8 +361,20 @@ Environment variables:
 | `RATE_LIMIT` | Per-client request limit | `60/minute` |
 | `RATE_LIMIT_STORAGE_URI` | Shared rate-limit backend URI; use Redis with multiple API replicas | `memory://` |
 | `SOURCE_INGEST_ALLOWED_HOSTS` | Comma-separated HTTPS hosts allowed for URL ingestion | Disabled by default |
+| `RERANK_CANDIDATE_MULTIPLIER` | Candidate pool size relative to final retrieval count (capped at 50) | `3` |
+| `MAX_CONTEXT_CHARS` | Maximum rendered evidence context sent to the answer model | `6000` |
 
-URL ingestion is intentionally disabled until `SOURCE_INGEST_ALLOWED_HOSTS` is configured. Text and Markdown file uploads remain available, with a 10 MB default size limit.
+URL ingestion is intentionally disabled until `SOURCE_INGEST_ALLOWED_HOSTS` is configured. Text, Markdown, and PDF uploads are supported, with a 10 MB default size limit.
+
+### PDF ingestion
+
+PDF uploads retain the uploaded bytes in the database with their SHA-256, original filename, page count, and upload metadata. Native text, OCR spans, and detected table elements are stored separately with source page, parser/version, bounding box, and review metadata. Retrieval passages link back to the source document and every page they cover. The existing SQLite `contract_passages` table is unchanged; startup `create_all` adds the new source, element, and passage-link tables without replacing existing rows. Back up the database before upgrading as usual. Re-uploading a PDF creates a new immutable source record and reindexes the scope's passages; previous source bytes remain stored. No reset or manual migration is required.
+
+PyMuPDF handles native extraction and geometric table detection. OCR uses `pytesseract` with the separately installed Tesseract executable and English language data by default. Install Tesseract on local Windows/macOS/Linux environments; the Docker image installs the English OCR package. OCR runs only for pages with fewer than `PDF_MIN_NATIVE_CHARS_PER_PAGE` native characters. Mixed pages retain the native text and add OCR spans after spatial duplicate suppression. Tesseract confidence is recorded per OCR line. Table rows, columns, detected headers, and page bounding boxes are retained as structured data and readable retrieval text. PyMuPDF is dual licensed under AGPL or a commercial license; review the [official license terms](https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright) for the intended deployment before shipping.
+
+OCR and table reconstruction are heuristic. Confidence and `needs_review` are signals for human inspection, not guarantees of correctness. Every detected table and every OCR-processed page is flagged for review. Scanned tables are retained as OCR text but are not reliably reconstructed into cells. The original PDF remains authoritative. Encrypted, malformed, empty, oversized, over-page-limit, and time-limited files return explicit errors. PDF parsing runs in a spawned worker process, with an overall deadline that terminates the parser; Tesseract also has a per-page subprocess timeout.
+
+PDF resource settings (all validated by application settings): `PDF_MAX_PAGES` (200), `PDF_RENDER_DPI` (200), `PDF_MAX_RENDER_PIXELS` (20,000,000), `PDF_OCR_TIMEOUT_SECONDS` (30), `PDF_EXTRACTION_TIMEOUT_SECONDS` (180), `PDF_MAX_EXTRACTED_CHARS` (2,000,000), `PDF_MIN_NATIVE_CHARS_PER_PAGE` (40), and `PDF_OCR_REVIEW_CONFIDENCE` (60). Uploads remain capped by `MAX_INGEST_FILE_BYTES` (10 MB). A successful file-ingestion response includes optional `source_document_id`, `content_sha256`, `extraction_status`, and `needs_review` fields; query citations may include source document ID and filename in addition to page.
 
 ## 📊 Evaluation
 

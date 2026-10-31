@@ -82,6 +82,8 @@ class DocumentChunk:
     token_count: Optional[int] = None
     embedding: Optional[List[float]] = None
     score: Optional[float] = None  # Similarity score when retrieved
+    source_document_id: Optional[int] = None
+    source_filename: Optional[str] = None
 
 
 @dataclass
@@ -94,6 +96,8 @@ class Citation:
     page: Optional[int] = None
     chunk_text: str = ""
     relevance_score: float = 0.0
+    source_document_id: Optional[int] = None
+    source_filename: Optional[str] = None
 
 
 @dataclass

@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.domain.entities.models import DocumentChunk, SectionType
-from app.infrastructure.database.models import ContractPassage
+from app.infrastructure.database.models import ContractPassage, PassageSource
 from app.infrastructure.llm.embeddings import get_embedding_service
 
 logger = structlog.get_logger()
@@ -49,7 +49,10 @@ class HybridSearch:
         beyond SQLite and is not intended for millions of passages.
         """
         query_embedding = await self.embedding_service.embed_query(query)
-        statement = select(ContractPassage).options(selectinload(ContractPassage.policy))
+        statement = select(ContractPassage).options(
+            selectinload(ContractPassage.policy),
+            selectinload(ContractPassage.source_links).selectinload(PassageSource.source_document),
+        )
         if contract_id is not None:
             statement = statement.where(ContractPassage.contract_id == contract_id)
         else:
@@ -112,6 +115,7 @@ class HybridSearch:
 
     def _to_document_chunk(self, passage: ContractPassage, score: float) -> DocumentChunk:
         """Map a persistence passage to the domain retrieval model."""
+        source = passage.source_links[0].source_document if passage.source_links else None
         return DocumentChunk(
             id=passage.id,
             contract_id=passage.contract_id,
@@ -123,6 +127,8 @@ class HybridSearch:
             passage_order=passage.passage_order,
             token_count=passage.token_count,
             score=score,
+            source_document_id=source.id if source else None,
+            source_filename=source.filename if source else None,
         )
 
     async def bm25_search(
@@ -135,11 +141,25 @@ class HybridSearch:
         if contract_id:
             stmt = (
                 select(ContractPassage)
-                .options(selectinload(ContractPassage.policy))
+                .options(
+                    selectinload(ContractPassage.policy),
+                    selectinload(ContractPassage.source_links).selectinload(
+                        PassageSource.source_document
+                    ),
+                )
                 .where(ContractPassage.contract_id == contract_id)
             )
         else:
-            stmt = select(ContractPassage).options(selectinload(ContractPassage.policy)).limit(1000)
+            stmt = (
+                select(ContractPassage)
+                .options(
+                    selectinload(ContractPassage.policy),
+                    selectinload(ContractPassage.source_links).selectinload(
+                        PassageSource.source_document
+                    ),
+                )
+                .limit(1000)
+            )
 
         result = await self.session.execute(stmt)
         chunks = result.scalars().all()

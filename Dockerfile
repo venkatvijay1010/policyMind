@@ -6,6 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system policymind \
     && useradd --system --gid policymind --create-home --home-dir /home/policymind policymind
 

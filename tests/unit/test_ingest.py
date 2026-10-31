@@ -1,5 +1,6 @@
 """Unit tests for safe source ingestion helpers."""
 
+import hashlib
 from io import BytesIO
 
 import pytest
@@ -70,3 +71,24 @@ async def test_uploaded_markdown_becomes_an_indexable_source_request():
     assert source_request.source_text is not None
     assert "Benefits Guide" in source_request.source_text
     assert source_request.segment_length == 100
+
+
+@pytest.mark.asyncio
+async def test_uploaded_pdf_keeps_exact_original_bytes_and_hash():
+    import pymupdf
+
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_text(
+        (72, 72), "Policy coverage applies from the effective date stated in the schedule."
+    )
+    original = document.tobytes()
+    document.close()
+    uploaded = UploadFile(filename="original-policy.pdf", file=BytesIO(original))
+
+    request = await _source_request_from_upload(uploaded, chunk_size=100, chunk_overlap=10)
+
+    assert request.original_bytes == original
+    assert request.extraction_hash == hashlib.sha256(original).hexdigest()
+    assert request.extraction_page_count == 1
+    assert request.extracted_elements[0]["page_number"] == 1

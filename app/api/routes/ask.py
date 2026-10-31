@@ -67,6 +67,8 @@ def _to_insight_response(result) -> InsightQueryResponse:
             page=c.page,
             chunk_text=c.chunk_text[:500],
             relevance_score=c.relevance_score,
+            source_document_id=c.source_document_id,
+            source_filename=c.source_filename,
         )
         for c in result.citations
     ]
@@ -345,6 +347,8 @@ async def rag_only(
             page=c.page,
             chunk_text=c.chunk_text[:500],
             relevance_score=c.relevance_score,
+            source_document_id=c.source_document_id,
+            source_filename=c.source_filename,
         )
         for c in result.citations
     ]

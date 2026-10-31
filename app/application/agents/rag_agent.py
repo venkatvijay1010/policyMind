@@ -18,6 +18,7 @@ from app.domain.entities.models import (
 from app.domain.services.citation_builder import CitationBuilder
 from app.infrastructure.llm.openai_client import get_openai_client
 from app.infrastructure.search.hybrid_search import HybridSearch
+from app.infrastructure.search.reranker import LocalReranker
 
 logger = structlog.get_logger()
 
@@ -37,6 +38,7 @@ class RAGAgent:
         self.search = HybridSearch(session)
         self.llm = get_openai_client()
         self.citation_builder = CitationBuilder()
+        self.reranker = LocalReranker()
 
     async def retrieve(
         self,
@@ -49,16 +51,22 @@ class RAGAgent:
         Retrieve relevant document chunks.
         """
         effective_top_k = top_k if top_k is not None else settings.top_k_retrieval
+        # Over-fetch a small candidate set so reranking can improve on the
+        # retriever's initial ordering. The absolute cap keeps extra work bounded.
+        candidate_count = max(
+            effective_top_k,
+            min(effective_top_k * settings.rerank_candidate_multiplier, 50),
+        )
         try:
             results = await self.search.search(
-                query=query, contract_id=contract_id, top_k=effective_top_k, method=search_method
+                query=query, contract_id=contract_id, top_k=candidate_count, method=search_method
             )
         except (APIConnectionError, ConnectionError, TimeoutError):
             if search_method == "bm25":
                 raise
             logger.warning("Embedding search unavailable; using lexical fallback")
             search_method = "bm25"
-            results = await self.search.bm25_search(query, contract_id, effective_top_k)
+            results = await self.search.bm25_search(query, contract_id, candidate_count)
 
         chunks = [
             result.chunk
@@ -68,9 +76,14 @@ class RAGAgent:
             and result.score > 0
             and (search_method != "vector" or result.score >= settings.similarity_threshold)
         ]
+        chunks = self.reranker.rerank(query, chunks, effective_top_k)
 
         logger.info(
-            "Retrieved chunks", query=query[:100], num_chunks=len(chunks), method=search_method
+            "Retrieved and reranked chunks",
+            query=query[:100],
+            num_chunks=len(chunks),
+            candidate_count=len(results),
+            method=search_method,
         )
 
         return RetrievalResult(chunks=chunks, search_method=search_method)
@@ -82,22 +95,37 @@ class RAGAgent:
         if not chunks:
             return "No relevant information found in policy documents."
 
-        context_parts = []
-        for i, chunk in enumerate(chunks, 1):
-            section_info = ""
-            if chunk.topic_title:
-                section_info = f" - Section: {chunk.topic_title}"
-            if chunk.source_page:
-                section_info += f" (Page {chunk.source_page})"
-
-            context_parts.append(f"[Source {i}{section_info}]\n{chunk.content}")
+        context_parts = [
+            self._format_context_chunk(chunk, index) for index, chunk in enumerate(chunks, 1)
+        ]
 
         return "\n\n---\n\n".join(context_parts)
+
+    @staticmethod
+    def _format_context_chunk(chunk: DocumentChunk, index: int) -> str:
+        section_info = f" - Section: {chunk.topic_title}" if chunk.topic_title else ""
+        if chunk.source_page:
+            section_info += f" (Page {chunk.source_page})"
+        return f"[Source {index}{section_info}]\n{chunk.content}"
+
+    def _select_context_chunks(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
+        """Keep highest-ranked whole chunks within the prompt context budget."""
+        selected: List[DocumentChunk] = []
+        context_length = 0
+        separator_length = len("\n\n---\n\n")
+        for chunk in chunks:
+            rendered_length = len(self._format_context_chunk(chunk, len(selected) + 1))
+            added_length = rendered_length + (separator_length if selected else 0)
+            if context_length + added_length <= settings.max_context_chars:
+                selected.append(chunk)
+                context_length += added_length
+        return selected
 
     async def generate_answer(self, query: str, chunks: List[DocumentChunk]) -> str:
         """
         Generate an answer based on retrieved chunks.
         """
+        chunks = self._select_context_chunks(chunks)
         context = self._build_context(chunks)
 
         system_prompt = """You are an insurance policy expert assistant.
@@ -140,7 +168,7 @@ Format your answer clearly and professionally."""
             query=query, contract_id=contract_id, top_k=top_k, search_method=search_method
         )
 
-        chunks = retrieval_result.chunks
+        chunks = self._select_context_chunks(retrieval_result.chunks)
 
         if not chunks:
             return QueryResult(

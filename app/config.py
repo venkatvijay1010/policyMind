@@ -59,6 +59,8 @@ class Settings(BaseSettings):
     # Search
     top_k_retrieval: int = 3
     similarity_threshold: float = 0.7
+    rerank_candidate_multiplier: int = Field(default=3, ge=1, le=10)
+    max_context_chars: int = Field(default=6000, ge=500, le=50000)
 
     # Rate limiting
     query_timeout_seconds: float = Field(default=180.0, gt=0, le=900)
@@ -75,6 +77,14 @@ class Settings(BaseSettings):
     source_ingest_allowed_hosts: str = ""
     max_ingest_file_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
     source_fetch_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    pdf_max_pages: int = Field(default=200, ge=1, le=2000)
+    pdf_render_dpi: int = Field(default=200, ge=72, le=400)
+    pdf_max_render_pixels: int = Field(default=20_000_000, ge=1_000_000, le=100_000_000)
+    pdf_ocr_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    pdf_extraction_timeout_seconds: float = Field(default=180.0, gt=0, le=900)
+    pdf_max_extracted_chars: int = Field(default=2_000_000, ge=1000, le=20_000_000)
+    pdf_min_native_chars_per_page: int = Field(default=40, ge=0, le=10000)
+    pdf_ocr_review_confidence: float = Field(default=60.0, ge=0, le=100)
 
     # CORS
     cors_origins: str = "*"  # Comma-separated list of origins, or * for all

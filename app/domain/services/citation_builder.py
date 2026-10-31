@@ -49,6 +49,8 @@ class CitationBuilder:
                 page=chunk.source_page,
                 chunk_text=snippet,
                 relevance_score=chunk.score or 0.0,
+                source_document_id=chunk.source_document_id,
+                source_filename=chunk.source_filename,
             )
             citations.append(citation)
 
@@ -88,6 +90,8 @@ class CitationBuilder:
                 "relevance": round(citation.relevance_score, 3)
                 if citation.relevance_score
                 else None,
+                "source_document_id": citation.source_document_id,
+                "source_filename": citation.source_filename,
             }
             for citation in citations
         ]

@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -51,6 +52,9 @@ class Policy(Base):
     chunks: Mapped[List["ContractPassage"]] = relationship(
         "ContractPassage", back_populates="policy", cascade="all, delete-orphan"
     )
+    source_documents: Mapped[List["SourceDocument"]] = relationship(
+        "SourceDocument", back_populates="policy", cascade="all, delete-orphan"
+    )
     plan_benefits: Mapped[List["Coverage"]] = relationship(
         "Coverage", back_populates="policy", cascade="all, delete-orphan"
     )
@@ -86,6 +90,86 @@ class ContractPassage(Base):
 
     # Relationships
     policy: Mapped["Policy"] = relationship("Policy", back_populates="chunks")
+    source_links: Mapped[List["PassageSource"]] = relationship(
+        "PassageSource", back_populates="passage", cascade="all, delete-orphan"
+    )
+
+
+class SourceDocument(Base):
+    """Immutable uploaded source bytes and PDF extraction summary."""
+
+    __tablename__ = "source_documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("benefit_contracts.id", ondelete="CASCADE"), nullable=False
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    content_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    original_bytes: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    page_count: Mapped[Optional[int]] = mapped_column(Integer)
+    upload_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    extraction_version: Mapped[Optional[str]] = mapped_column(String(50))
+    extraction_status: Mapped[str] = mapped_column(String(30), default="complete", nullable=False)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    policy: Mapped["Policy"] = relationship("Policy", back_populates="source_documents")
+    elements: Mapped[List["DocumentElement"]] = relationship(
+        "DocumentElement", back_populates="source_document", cascade="all, delete-orphan"
+    )
+    passage_links: Mapped[List["PassageSource"]] = relationship(
+        "PassageSource", back_populates="source_document", cascade="all, delete-orphan"
+    )
+
+
+class DocumentElement(Base):
+    """A page-scoped typed extraction result retaining parser provenance."""
+
+    __tablename__ = "document_elements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_document_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    element_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    text_content: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    structured_data: Mapped[Optional[dict]] = mapped_column(JSON)
+    bbox: Mapped[Optional[list]] = mapped_column(JSON)
+    confidence: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
+    parser_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    parser_version: Mapped[Optional[str]] = mapped_column(String(50))
+    extraction_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    needs_review: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    source_document: Mapped["SourceDocument"] = relationship(
+        "SourceDocument", back_populates="elements"
+    )
+
+
+class PassageSource(Base):
+    """Links an existing retrieval passage to its source document and page elements."""
+
+    __tablename__ = "passage_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    passage_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contract_passages.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_document_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("source_documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    page_number: Mapped[Optional[int]] = mapped_column(Integer)
+    element_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+
+    passage: Mapped["ContractPassage"] = relationship(
+        "ContractPassage", back_populates="source_links"
+    )
+    source_document: Mapped["SourceDocument"] = relationship(
+        "SourceDocument", back_populates="passage_links"
+    )
 
 
 class Coverage(Base):

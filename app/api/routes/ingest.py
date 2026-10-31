@@ -1,10 +1,10 @@
 """Document ingestion endpoints and safe chunking helpers."""
 
-import json
+import asyncio
+import hashlib
 import re
 import time
 from bisect import bisect_right
-from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -18,8 +18,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.schemas import KnowledgeSourceRequest, KnowledgeSourceResponse
 from app.config import settings
-from app.infrastructure.database.models import Policy
+from app.infrastructure.database.models import (
+    ContractPassage,
+    DocumentElement,
+    PassageSource,
+    Policy,
+    SourceDocument,
+)
 from app.infrastructure.database.postgres import get_db_session
+from app.infrastructure.documents.pdf_extractor import (
+    EXTRACTION_VERSION,
+    PDFExtractionError,
+    PDFExtractionTimeoutError,
+    extract_pdf_with_timeout,
+)
 from app.infrastructure.llm.embeddings import get_embedding_service
 from app.infrastructure.rate_limit import limiter
 
@@ -201,6 +213,11 @@ async def _source_request_from_upload(
     suffix = Path(filename).suffix.lower()
 
     page_starts: list[int] = []
+    extraction_elements: list[dict[str, Any]] = []
+    extraction_hash: str | None = None
+    extraction_page_count: int | None = None
+    extraction_needs_review = False
+    extraction_version: str | None = None
     if suffix in {".txt", ".md"}:
         try:
             text_content = content.decode("utf-8")
@@ -208,23 +225,54 @@ async def _source_request_from_upload(
             raise HTTPException(status_code=422, detail="Uploaded text must be UTF-8") from exc
     elif suffix == ".pdf":
         try:
-            from pypdf import PdfReader
-
-            reader = PdfReader(BytesIO(content))
-            pages: list[str] = []
+            extraction = await asyncio.to_thread(
+                extract_pdf_with_timeout,
+                content,
+                settings.pdf_extraction_timeout_seconds,
+            )
+            pages = []
             current_offset = 0
-            for page in reader.pages:
+            for page in extraction.pages:
                 page_starts.append(current_offset)
-                page_text = page.extract_text() or ""
+                page_text = page.text
                 pages.append(page_text)
                 current_offset += len(page_text) + 2
             text_content = "\n\n".join(pages)
-        except ImportError as exc:
+            extraction_elements = [
+                {
+                    "page_number": element.page_number,
+                    "element_type": element.element_type,
+                    "text_content": element.text_content,
+                    "structured_data": element.structured_data,
+                    "bbox": element.bbox,
+                    "confidence": element.confidence,
+                    "parser_name": element.parser_name,
+                    "parser_version": element.parser_version,
+                    "extraction_version": EXTRACTION_VERSION,
+                    "needs_review": element.needs_review,
+                }
+                for page in extraction.pages
+                for element in page.elements
+            ]
+            extraction_hash = extraction.content_sha256
+            extraction_page_count = extraction.page_count
+            extraction_needs_review = extraction.needs_review
+            extraction_version = EXTRACTION_VERSION
+        except PDFExtractionTimeoutError as exc:
             raise HTTPException(
-                status_code=503, detail="PDF support is not installed on this server"
+                status_code=504, detail="PDF extraction exceeded its time limit"
             ) from exc
+        except PDFExtractionError as exc:
+            error_detail = str(exc)
+            if "timed out" in error_detail.lower():
+                status_code = 504
+            elif "OCR support requires" in error_detail or "verify that Tesseract" in error_detail:
+                status_code = 503
+            else:
+                status_code = 422
+            raise HTTPException(status_code=status_code, detail=error_detail) from exc
         except Exception as exc:
-            logger.warning("Failed to extract PDF text", filename=filename, error=str(exc))
+            logger.warning("Failed to extract PDF text", error_type=type(exc).__name__)
             raise HTTPException(
                 status_code=422, detail="Unable to extract text from this PDF"
             ) from exc
@@ -242,6 +290,14 @@ async def _source_request_from_upload(
         segment_length=chunk_size,
         segment_overlap=chunk_overlap,
         source_page_starts=page_starts,
+        original_filename=filename[:255],
+        original_content_type=(file.content_type or "application/octet-stream")[:100],
+        original_bytes=content,
+        extracted_elements=extraction_elements,
+        extraction_hash=extraction_hash or hashlib.sha256(content).hexdigest(),
+        extraction_page_count=extraction_page_count,
+        extraction_version=extraction_version,
+        extraction_needs_review=extraction_needs_review,
     )
 
 
@@ -296,40 +352,78 @@ async def _index_contract_source(
             status_code=502, detail="Embedding service returned an incomplete response"
         )
 
-    insert_parameters = [
-        {
-            "contract_id": scope_key,
-            "content": chunk["content"],
-            "passage_order": chunk["passage_order"],
-            "source_offset_start": chunk["source_offset_start"],
-            "source_offset_end": chunk["source_offset_end"],
-            "topic_title": chunk["topic_title"],
-            "source_page": chunk["source_page"],
-            # SQLite persists local embedding vectors as JSON. JSON text also
-            # remains portable if the database is later moved elsewhere.
-            "embedding": json.dumps(embedding),
-        }
-        for chunk, embedding in zip(chunks, embeddings)
-    ]
-
     # The request-scoped session commits only after the endpoint succeeds. Deleting
-    # and inserting in one transaction makes PUT idempotent and prevents partial indexes.
+    # and inserting in one transaction makes PUT idempotent. Source documents are
+    # append-only for auditability; replacing an index never deletes original bytes.
     await db.execute(
         text("DELETE FROM contract_passages WHERE contract_id = :contract_id"),
         {"contract_id": scope_key},
     )
-    await db.execute(
-        text(
-            """
-            INSERT INTO contract_passages
-            (contract_id, content, passage_order, source_offset_start, source_offset_end,
-             topic_title, source_page, embedding)
-            VALUES (:contract_id, :content, :passage_order, :source_offset_start,
-                    :source_offset_end, :topic_title, :source_page, :embedding)
-            """
-        ),
-        insert_parameters,
-    )
+    source_document: SourceDocument | None = None
+    element_ids_by_page: dict[int, list[int]] = {}
+    if source_request.original_bytes is not None:
+        source_document = SourceDocument(
+            contract_id=scope_key,
+            filename=source_request.original_filename or "uploaded-document",
+            content_type=source_request.original_content_type or "application/octet-stream",
+            content_sha256=source_request.extraction_hash
+            or hashlib.sha256(source_request.original_bytes).hexdigest(),
+            original_bytes=source_request.original_bytes,
+            page_count=source_request.extraction_page_count,
+            upload_metadata={"source": "multipart_upload"},
+            extraction_version=source_request.extraction_version,
+            extraction_status="needs_review"
+            if source_request.extraction_needs_review
+            else "complete",
+            needs_review=source_request.extraction_needs_review,
+        )
+        db.add(source_document)
+        await db.flush()
+        created_elements = []
+        for item in source_request.extracted_elements:
+            element = DocumentElement(source_document_id=source_document.id, **item)
+            db.add(element)
+            created_elements.append(element)
+        await db.flush()
+        for element in created_elements:
+            element_ids_by_page.setdefault(element.page_number, []).append(element.id)
+
+    for chunk, embedding in zip(chunks, embeddings):
+        passage = ContractPassage(
+            contract_id=scope_key,
+            content=chunk["content"],
+            passage_order=chunk["passage_order"],
+            source_offset_start=chunk["source_offset_start"],
+            source_offset_end=chunk["source_offset_end"],
+            topic_title=chunk["topic_title"],
+            source_page=chunk["source_page"],
+            embedding=embedding,
+        )
+        db.add(passage)
+        if source_document is not None:
+            await db.flush()
+            source_pages = [chunk["source_page"]]
+            if source_request.source_page_starts:
+                first_page = max(
+                    1, bisect_right(source_request.source_page_starts, chunk["source_offset_start"])
+                )
+                last_page = max(
+                    first_page,
+                    bisect_right(
+                        source_request.source_page_starts,
+                        max(chunk["source_offset_start"], chunk["source_offset_end"] - 1),
+                    ),
+                )
+                source_pages = list(range(first_page, last_page + 1))
+            for source_page in source_pages:
+                db.add(
+                    PassageSource(
+                        passage_id=passage.id,
+                        source_document_id=source_document.id,
+                        page_number=source_page,
+                        element_ids=element_ids_by_page.get(source_page, []),
+                    )
+                )
 
     processing_time = int((time.monotonic() - start_time) * 1000)
     logger.info(
@@ -344,6 +438,10 @@ async def _index_contract_source(
         segments_created=len(chunks),
         processing_time_ms=processing_time,
         message=f"Indexed {len(chunks)} segments for contract '{policy.contract_title}'",
+        source_document_id=source_document.id if source_document else None,
+        content_sha256=source_document.content_sha256 if source_document else None,
+        extraction_status=source_document.extraction_status if source_document else None,
+        needs_review=source_document.needs_review if source_document else False,
     )
 
 

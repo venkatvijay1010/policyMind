@@ -93,6 +93,8 @@ class Citation(BaseModel):
     page: Optional[int]
     chunk_text: str
     relevance_score: float
+    source_document_id: Optional[int] = None
+    source_filename: Optional[str] = None
 
 
 class InsightQueryResponse(BaseModel):
@@ -149,6 +151,15 @@ class KnowledgeSourceRequest(BaseModel):
     # Internal provenance passed from the upload parser. It is deliberately not
     # required for API callers because plain text has no physical pages.
     source_page_starts: List[int] = Field(default_factory=list, exclude=True)
+    # Upload-only provenance; excluded from public serialization and API schemas.
+    original_filename: Optional[str] = Field(None, exclude=True)
+    original_content_type: Optional[str] = Field(None, exclude=True)
+    original_bytes: Optional[bytes] = Field(None, exclude=True)
+    extracted_elements: List[dict] = Field(default_factory=list, exclude=True)
+    extraction_hash: Optional[str] = Field(None, exclude=True)
+    extraction_page_count: Optional[int] = Field(None, exclude=True)
+    extraction_version: Optional[str] = Field(None, exclude=True)
+    extraction_needs_review: bool = Field(False, exclude=True)
 
     @model_validator(mode="after")
     def require_one_source(self):
@@ -166,6 +177,10 @@ class KnowledgeSourceResponse(BaseModel):
     segments_created: int
     processing_time_ms: int
     message: str
+    source_document_id: Optional[int] = None
+    content_sha256: Optional[str] = None
+    extraction_status: Optional[str] = None
+    needs_review: bool = False
 
 
 # === Evaluation Endpoint Schemas ===
