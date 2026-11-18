@@ -59,6 +59,114 @@ async def test_followup_preserves_history_and_resolves_question():
     )
 
 
+async def test_chat_route_can_omit_resolved_query():
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = route("chat", None) | {"reason": None}
+
+    result = await classifier.classify("Tell me a joke.")
+
+    assert result.query_type == QueryType.CHAT
+    assert result.resolved_query is None
+    classifier.llm.classify_query.assert_awaited_once()
+
+
+@pytest.mark.parametrize("query", ["Hi", "hello!", " Good morning. ", "how r u", "thanks!"])
+async def test_small_talk_is_routed_by_the_model_not_a_phrase_list(query):
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = {"decision": "route", "query_type": "chat"}
+
+    result = await classifier.classify(query)
+
+    assert result.query_type == QueryType.CHAT
+    classifier.llm.classify_query.assert_awaited_once()
+
+
+async def test_compact_chat_decision_is_completed():
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = {"decision": "route", "query_type": "chat"}
+
+    result = await classifier.classify("how r u")
+
+    assert (result.needs_documents, result.needs_records) == (False, False)
+    assert result.resolved_query is None
+    assert result.reasoning
+
+
+async def test_blank_reason_is_derived_instead_of_failing_validation():
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = route("chat", None) | {"reason": ""}
+
+    result = await classifier.classify("thanks!")
+
+    assert result.query_type == QueryType.CHAT
+    assert result.reasoning
+    classifier.llm.classify_query.assert_awaited_once()
+
+
+async def test_first_turn_evidence_route_uses_the_original_query():
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = {
+        "decision": "route",
+        "query_type": "records_sql",
+    }
+
+    result = await classifier.classify("  Which providers reject most claims?  ")
+
+    assert result.resolved_query == "Which providers reject most claims?"
+    assert (result.needs_documents, result.needs_records) == (False, True)
+
+
+async def test_followup_without_standalone_question_fails_closed():
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = {
+        "decision": "route",
+        "query_type": "records_sql",
+    }
+    history = [{"role": "user", "content": "Count declined cases in 2024."}]
+
+    with pytest.raises(RoutingError) as error:
+        await classifier.classify("What about 2023?", history)
+
+    assert error.value.code == "invalid_routing"
+    assert classifier.llm.classify_query.await_count == 2
+
+
+async def test_compact_clarification_is_completed():
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = {
+        "decision": "clarify",
+        "clarification_question": "Which benefit do you mean?",
+    }
+
+    result = await classifier.classify("What is its limit?")
+
+    assert result.decision == "clarify"
+    assert result.query_type is None
+    assert result.clarification_question == "Which benefit do you mean?"
+
+
+async def test_explicit_contradiction_is_rejected_not_repaired():
+    classifier = QueryClassifier()
+    classifier.llm = AsyncMock()
+    classifier.llm.classify_query.return_value = {
+        "decision": "route",
+        "query_type": "document_qa",
+        "needs_documents": False,
+    }
+
+    with pytest.raises(RoutingError) as error:
+        await classifier.classify("How many days is the waiting period?")
+
+    assert error.value.code == "invalid_routing"
+
+
 async def test_ambiguous_question_requests_clarification():
     classifier = QueryClassifier()
     classifier.llm = AsyncMock()
@@ -96,8 +204,11 @@ def test_invalid_decision_is_rejected(update):
 async def test_invalid_output_has_bounded_recovery():
     classifier = QueryClassifier()
     classifier.llm = AsyncMock()
-    classifier.llm.classify_query.side_effect = [{"query_type": "chat"}, route("chat", "Hi")]
-    assert (await classifier.classify("Hi")).query_type == QueryType.CHAT
+    classifier.llm.classify_query.side_effect = [
+        {"query_type": "chat"},
+        route("chat", "Tell me a joke."),
+    ]
+    assert (await classifier.classify("Tell me a joke.")).query_type == QueryType.CHAT
     assert classifier.llm.classify_query.await_count == 2
     assert classifier.llm.classify_query.await_args.kwargs["validation_retry"] is True
 
@@ -107,7 +218,7 @@ async def test_repeated_invalid_output_fails_closed():
     classifier.llm = AsyncMock()
     classifier.llm.classify_query.return_value = {"query_type": "chat"}
     with pytest.raises(RoutingError) as error:
-        await classifier.classify("Hi")
+        await classifier.classify("Tell me a joke.")
     assert error.value.code == "invalid_routing"
     assert classifier.llm.classify_query.await_count == 2
 
@@ -151,6 +262,11 @@ async def test_llm_routing_transport_uses_context_and_schema(monkeypatch, mode):
     assert kwargs["temperature"] == 0.0
     assert kwargs["max_tokens"] > 96
     assert kwargs["response_format"]["type"] == mode
+    system = kwargs["messages"][0]["content"]
+    assert "Routing policy: evidence-v2" in system
+    assert json.dumps(schema) not in system
+    # Uncached local prefill is ~27 tokens/s, so growth here is user-visible latency.
+    assert len(system) < 3300
     if mode == "json_schema":
         assert kwargs["response_format"]["json_schema"]["schema"] == schema
 

@@ -2,6 +2,7 @@
 FastAPI application entry point.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api.routes import ask, health, ingest
 from app.api.routes import eval as eval_route
+from app.application.warm_up import warm_up_models
 from app.config import settings
 from app.infrastructure.database.postgres import close_db, init_db
 from app.infrastructure.rate_limit import limiter
@@ -47,10 +49,19 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
+    warm_up_task = (
+        asyncio.create_task(warm_up_models())
+        if settings.warm_up_on_startup and settings.is_ollama
+        else None
+    )
+
     yield
 
     # Shutdown
     logger.info("Shutting down PolicyMind application")
+    if warm_up_task:
+        warm_up_task.cancel()
+        await asyncio.gather(warm_up_task, return_exceptions=True)
     await close_db()
 
 

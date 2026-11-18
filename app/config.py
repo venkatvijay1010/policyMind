@@ -46,11 +46,13 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
     )
     embedding_model: str = "nomic-embed-text"
-    chat_model: str = "qwen2.5:3b"
+    chat_model: str = "qwen2.5:7b"
     embedding_dimension: int = Field(default=768, ge=1)
     # Keep local CPU inference responsive. Override with LLM_MAX_TOKENS when
     # running a larger/faster model or when longer answers are required.
     llm_max_tokens: int = Field(default=220, ge=64, le=4000)
+    # Prime the local model and prompt caches at startup so the first message is not cold.
+    warm_up_on_startup: bool = True
 
     # Chunking
     chunk_size: int = 500
@@ -64,7 +66,7 @@ class Settings(BaseSettings):
 
     # Rate limiting
     query_timeout_seconds: float = Field(default=180.0, gt=0, le=900)
-    routing_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    routing_timeout_seconds: float = Field(default=60.0, gt=0, le=120)
     routing_output_mode: Literal["json_object", "json_schema"] = "json_object"
     node_timeout_seconds: float = Field(default=90.0, gt=0, le=600)
     graph_max_retries: int = Field(default=1, ge=0, le=3)

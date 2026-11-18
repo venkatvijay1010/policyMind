@@ -192,6 +192,9 @@ class SQLAgent:
                     if source.name.lower() not in _ALLOWED_TABLES:
                         return None
             for function in statement.find_all(exp.Func):
+                if isinstance(function, exp.Connector):
+                    # AND/OR are operators; newer sqlglot releases also classify them as Func.
+                    continue
                 name = function.name if isinstance(function, exp.Anonymous) else function.sql_name()
                 if name.upper() not in _ALLOWED_FUNCTIONS:
                     return None

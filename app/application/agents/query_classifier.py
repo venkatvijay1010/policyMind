@@ -4,7 +4,7 @@ Query classifier agent - routes queries to appropriate handler.
 
 import asyncio
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -14,6 +14,21 @@ from app.domain.entities.models import ClassificationResult, QueryType
 from app.infrastructure.llm.openai_client import ROUTING_POLICY_VERSION, get_openai_client
 
 logger = structlog.get_logger()
+
+# Evidence each route reads: (policy documents, service-case records). The model only
+# chooses the route; these flags follow from it, so they are derived, not generated.
+EVIDENCE_BY_ROUTE: dict[str, tuple[bool, bool]] = {
+    "chat": (False, False),
+    "document_qa": (True, False),
+    "records_sql": (False, True),
+    "hybrid": (True, True),
+}
+EVIDENCE_LABELS = {
+    "chat": "no policy or records evidence",
+    "document_qa": "policy documents",
+    "records_sql": "service-case records",
+    "hybrid": "policy documents and service-case records",
+}
 
 
 class RoutingError(RuntimeError):
@@ -54,20 +69,50 @@ class RoutingDecision(BaseModel):
             ):
                 raise ValueError("Clarification must ask a question without selecting tools")
         else:
-            capabilities = {
-                "chat": (False, False),
-                "document_qa": (True, False),
-                "records_sql": (False, True),
-                "hybrid": (True, True),
-            }
-            if self.query_type is None or capabilities[self.query_type] != (
+            if self.query_type is None or EVIDENCE_BY_ROUTE[self.query_type] != (
                 self.needs_documents,
                 self.needs_records,
             ):
                 raise ValueError("Route does not match the required evidence")
-            if self.resolved_query is None or self.clarification_question is not None:
-                raise ValueError("Routing requires a standalone question, not a clarification")
+            if self.clarification_question is not None:
+                raise ValueError("A routed question cannot include a clarification")
+            if self.query_type != "chat" and self.resolved_query is None:
+                raise ValueError("Evidence routes require a standalone question")
         return self
+
+
+def complete_decision(
+    raw: dict[str, Any], query: str, conversation: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Fill fields that follow from the model's route, without overriding any it supplied.
+
+    Local inference time is dominated by generated tokens, so the router only emits the
+    route, plus a standalone rewrite when earlier turns exist. Evidence flags, the audit
+    reason and the rewrite of a first-turn question are derived here. A value the model did
+    supply that contradicts its route is still rejected by RoutingDecision.
+    """
+    completed = dict(raw)
+    route = completed.get("query_type") if completed.get("decision") == "route" else None
+    route = route if isinstance(route, str) and route in EVIDENCE_BY_ROUTE else ""
+    needs_documents, needs_records = EVIDENCE_BY_ROUTE.get(route, (False, False))
+    if completed.get("needs_documents") is None:
+        completed["needs_documents"] = needs_documents
+    if completed.get("needs_records") is None:
+        completed["needs_records"] = needs_records
+
+    for key in ("query_type", "resolved_query", "clarification_question"):
+        completed.setdefault(key, None)
+    if route and route != "chat" and not conversation and completed["resolved_query"] is None:
+        # Without earlier turns the latest query already stands alone.
+        completed["resolved_query"] = query.strip()
+
+    reason = completed.get("reason")
+    if reason is None or (isinstance(reason, str) and not reason.strip()):
+        if completed.get("decision") == "clarify":
+            completed["reason"] = "A required detail is missing before evidence can be selected."
+        elif route:
+            completed["reason"] = f"Required evidence: {EVIDENCE_LABELS[route]}."
+    return completed
 
 
 class QueryClassifier:
@@ -90,17 +135,20 @@ class QueryClassifier:
     ) -> ClassificationResult:
         """Select evidence semantically and reject invalid or unavailable routing."""
         started = perf_counter()
+        history = conversation or []
         try:
             async with asyncio.timeout(settings.routing_timeout_seconds):
                 for attempt in range(2):
                     try:
                         result = await self.llm.classify_query(
                             query,
-                            conversation or [],
+                            history,
                             response_schema=RoutingDecision.model_json_schema(),
                             validation_retry=attempt > 0,
                         )
-                        decision = RoutingDecision.model_validate(result)
+                        decision = RoutingDecision.model_validate(
+                            complete_decision(result, query, history)
+                        )
                     except ValueError as exc:
                         logger.warning(
                             "Invalid routing decision",

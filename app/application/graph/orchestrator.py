@@ -307,12 +307,12 @@ class PolicyMindGraph:
         return "failure"
 
     async def _chat_node(self, state: GraphState) -> dict:
-        """Conversation node - responds with the local LLM and no retrieval."""
+        """Conversation node - replies to the user's own message; history carries the context."""
         return await self._execute_node(
             "chat",
             state,
             lambda: self.chat_agent.answer(
-                state.get("resolved_query", state["query"]),
+                state["query"],
                 conversation=state.get("conversation", []),
             ),
         )

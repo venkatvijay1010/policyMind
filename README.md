@@ -88,8 +88,10 @@ These defaults need calibration against deployment latency and retrieval evaluat
 
 ### Semantic Routing
 
-Every question is classified by required evidence, with up to ten recent conversation
-turns for context. `chat` needs neither private source, `document_qa` needs policy
+Questions are classified by required evidence, with up to ten recent conversation
+turns for context. Every request, including small talk, goes through the same semantic
+classifier; there is no keyword or phrase fast path. `chat` needs neither private source,
+`document_qa` needs policy
 documents, `records_sql` needs observed records, and `hybrid` needs both. For example,
 "How many days is the waiting period?" needs documents, not SQL. The router can also
 return `clarify` when a necessary referent is missing. Normal and SSE query responses
@@ -106,15 +108,23 @@ consistent evidence requirements. One malformed response can trigger a corrected
 model request; repeated invalid output produces `invalid_routing`. Provider failures
 or routing timeouts produce `routing_unavailable`, never an invented document route.
 The entire routing operation, including provider retries, is bounded by
-`ROUTING_TIMEOUT_SECONDS` (30 by default). Tune this for the selected local model.
+`ROUTING_TIMEOUT_SECONDS` (60 by default). Tune this for the selected local model.
 
-`ROUTING_OUTPUT_MODE=json_object` is the compatibility default; the schema is included
-in the prompt and validated locally. Set `ROUTING_OUTPUT_MODE=json_schema` only with
+Local CPU latency is prefill (about 27 tokens/s uncached) plus decode (about 11 tokens/s),
+so the router prompt is compact and the model emits only the route (plus a standalone
+rewrite when history exists). The needs flags and reason are derived in code from the
+route, and any value the model does supply must still agree with it. A cold first request
+pays the prompt prefill once; the app warms the routing and chat prompts at startup
+(`WARM_UP_ON_STARTUP`), and `OLLAMA_KEEP_ALIVE=30m` keeps the model and its prompt cache
+loaded between messages.
+
+`ROUTING_OUTPUT_MODE=json_object` is the compatibility default; the compact output shapes
+are validated locally against the full schema. Set `ROUTING_OUTPUT_MODE=json_schema` only with
 a provider/model that supports strict OpenAI-compatible JSON Schema responses. It
 does not silently downgrade unsupported schema requests. No model confidence is
 treated as a probability; the legacy preview `confidence` field is now null.
 `POST /api/v2/insights/route-preview` exposes the decision, capabilities, resolved
-query and clarification question. Routing logs include policy version `evidence-v1`,
+query and clarification question. Routing logs include policy version `evidence-v2`,
 duration and validation-attempt count.
 
 Contract tests mock model responses; they verify enforcement, not semantic accuracy.
@@ -131,8 +141,8 @@ Remove-Item Env:RUN_ROUTING_EVAL
 This small smoke set is not a production accuracy benchmark. Expand it with reviewed
 domain questions, paraphrases, multilingual input and adversarial requests; measure
 per-route errors, clarification rate, invalid-output rate, latency and provider
-failures before rollout or a model/prompt change. Budget the extra routing model call
-for every request; no keyword fast path or cross-user routing cache is used.
+failures before rollout or a model/prompt change. Budget the extra routing model call for
+every request; no keyword fast path or cross-user routing cache is used.
 
 This is not a certification for production handling of real insurance data.
 Citation integrity does not prove that every claim follows from the cited evidence.

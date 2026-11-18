@@ -93,7 +93,8 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .button-icon { font-size: 1.2rem; line-height: 1; }
 
 .sidebar-section { display: grid; gap: 9px; }
-.knowledge-section { min-height: 0; }
+/* Sections keep their natural height; the sidebar itself scrolls when the upload form is open. */
+.sidebar > * { flex: 0 0 auto; }
 .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .eyebrow { margin: 0; color: #86b4d6; font-size: .66rem; font-weight: 830; letter-spacing: .13em; text-transform: uppercase; }
 .section-copy { margin: 5px 0 0; color: var(--subtle); font-size: .72rem; line-height: 1.4; }
@@ -104,7 +105,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .field-label { color: #9cb8ca; font-size: .68rem; font-weight: 730; }
 .upload-panel input:not([type="file"]) { width: 100%; padding: 8px 9px; border: 1px solid #2e4e67; border-radius: 7px; outline: 0; background: #091725; color: var(--text); font-size: .75rem; }
 .upload-panel input::placeholder { color: #638096; }
-.dropzone { display: grid; gap: 2px; padding: 12px 9px; border: 1px dashed #3d6d86; border-radius: 9px; background: #0c1d2d; color: #d4ebf7; text-align: center; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
+.dropzone { position: relative; display: grid; gap: 2px; padding: 12px 9px; border: 1px dashed #3d6d86; border-radius: 9px; background: #0c1d2d; color: #d4ebf7; text-align: center; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
 .dropzone:hover, .dropzone.is-dragging { border-color: var(--cyan-bright); background: #102a3b; transform: translateY(-1px); }
 .dropzone input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .dropzone-icon { color: var(--cyan); font-size: 1.05rem; font-weight: 850; }

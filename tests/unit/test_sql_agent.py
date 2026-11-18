@@ -40,6 +40,9 @@ def sql_agent() -> tuple[SQLAgent, AsyncMock]:
         "SELECT id, updated_at FROM service_cases",
         "WITH totals AS (SELECT count(*) AS count FROM service_cases) SELECT * FROM totals",
         "SELECT * FROM service_cases;",
+        "SELECT COUNT(*) FROM service_cases WHERE strftime('%Y', submitted_on) = '2024' "
+        "AND case_status = 'DECLINED' LIMIT 1;",
+        "SELECT id FROM service_cases WHERE case_status = 'DECLINED' OR case_status = 'PENDING'",
     ],
 )
 def test_safe_sql_allows_single_read_only_statements(sql_agent, sql):
@@ -59,6 +62,7 @@ def test_safe_sql_allows_single_read_only_statements(sql_agent, sql):
         "SELECT * FROM service_cases FOR UPDATE",
         "SELECT pg_sleep(100)",
         "SELECT load_extension('unsafe')",
+        "SELECT id FROM service_cases WHERE case_status = 'DECLINED' AND pg_sleep(1) IS NOT NULL",
         "SELECT * FROM query_logs",
         "SELECT * FROM pg_catalog.pg_authid",
         "WITH query_logs AS (SELECT * FROM query_logs) SELECT * FROM query_logs",

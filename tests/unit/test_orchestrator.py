@@ -97,6 +97,18 @@ async def test_followup_executes_resolved_query_but_returns_original_prompt():
     assert result.query == "What about 2023?"
 
 
+async def test_chat_replies_to_the_original_message_not_a_router_rewrite():
+    graph = make_graph()
+    graph.classifier.classify.return_value = ClassificationResult(
+        QueryType.CHAT, resolved_query="A rewritten message"
+    )
+    history = [{"role": "user", "content": "Hello"}]
+
+    await graph.invoke("how r u", conversation=history)
+
+    graph.chat_agent.answer.assert_awaited_once_with("how r u", conversation=history)
+
+
 async def test_invalid_citations_are_rejected():
     from app.domain.entities.models import Citation
 
