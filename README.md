@@ -373,6 +373,10 @@ Environment variables:
 | `SOURCE_INGEST_ALLOWED_HOSTS` | Comma-separated HTTPS hosts allowed for URL ingestion | Disabled by default |
 | `RERANK_CANDIDATE_MULTIPLIER` | Candidate pool size relative to final retrieval count (capped at 50) | `3` |
 | `MAX_CONTEXT_CHARS` | Maximum rendered evidence context sent to the answer model | `6000` |
+| `VECTOR_BACKEND` | `database` or `qdrant` | `database` |
+| `QDRANT_URL` | Qdrant server URL; required when `VECTOR_BACKEND=qdrant` | empty |
+| `QDRANT_API_KEY` | Optional Qdrant API key | empty |
+| `QDRANT_COLLECTION` | Qdrant collection name | `policymind_passages` |
 
 URL ingestion is intentionally disabled until `SOURCE_INGEST_ALLOWED_HOSTS` is configured. Text, Markdown, and PDF uploads are supported, with a 10 MB default size limit.
 
@@ -385,6 +389,36 @@ PyMuPDF handles native extraction and geometric table detection. OCR uses `pytes
 OCR and table reconstruction are heuristic. Confidence and `needs_review` are signals for human inspection, not guarantees of correctness. Every detected table and every OCR-processed page is flagged for review. Scanned tables are retained as OCR text but are not reliably reconstructed into cells. The original PDF remains authoritative. Encrypted, malformed, empty, oversized, over-page-limit, and time-limited files return explicit errors. PDF parsing runs in a spawned worker process, with an overall deadline that terminates the parser; Tesseract also has a per-page subprocess timeout.
 
 PDF resource settings (all validated by application settings): `PDF_MAX_PAGES` (200), `PDF_RENDER_DPI` (200), `PDF_MAX_RENDER_PIXELS` (20,000,000), `PDF_OCR_TIMEOUT_SECONDS` (30), `PDF_EXTRACTION_TIMEOUT_SECONDS` (180), `PDF_MAX_EXTRACTED_CHARS` (2,000,000), `PDF_MIN_NATIVE_CHARS_PER_PAGE` (40), and `PDF_OCR_REVIEW_CONFIDENCE` (60). Uploads remain capped by `MAX_INGEST_FILE_BYTES` (10 MB). A successful file-ingestion response includes optional `source_document_id`, `content_sha256`, `extraction_status`, and `needs_review` fields; query citations may include source document ID and filename in addition to page.
+
+### Evidence source viewer and S3 storage
+
+Every evidence citation has an **Open source** button. PDFs open on the cited page with the cited paragraph highlighted; text and Markdown documents open with the cited passage highlighted. **Open original** opens the stored file in a new tab.
+
+Originals are kept in the database by default. To also store them in a private S3 bucket (the location is saved in `source_documents.storage_backend`, `storage_bucket`, and `storage_key`), set:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `STORAGE_BACKEND` | `database` or `s3` | `database` |
+| `S3_BUCKET` | Bucket name; required when `STORAGE_BACKEND=s3` | empty |
+| `S3_REGION` | Bucket region | empty |
+| `S3_PREFIX` | Object key prefix | `source-documents` |
+| `S3_ENDPOINT_URL` | Optional S3-compatible endpoint, for example MinIO | empty |
+
+Credentials come from the standard AWS chain (environment, shared profile or SSO, or an IAM role). Keep the bucket private with Block Public Access enabled; the API streams files itself, so no public or presigned URLs are used. A least-privilege policy needs `s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject` on `arn:aws:s3:::BUCKET/source-documents/*`. New uploads are embedded and then written to S3 during ingestion (an upload failure returns 502). To attach and upload documents that already exist, run `python scripts/backfill_source_storage.py --dry-run`, then the same command without `--dry-run`, from the repository root with `PYTHONPATH` set to it. The source endpoints are unauthenticated like the rest of the API.
+
+### Qdrant vector search
+
+By default, vector search ranks the embeddings stored in the database. To use Qdrant instead, run `docker compose up -d qdrant`, set `VECTOR_BACKEND=qdrant` and `QDRANT_URL=http://localhost:6333`, then run `python scripts/index_qdrant.py` once for existing documents (new uploads are indexed automatically).
+
+BM25, RRF fusion and the local reranker are unchanged and still run in the app. The database stays the source of truth and Qdrant is not transactional with it, so re-run the script if an upload fails after the vector step.
+
+### Dynatrace monitoring
+
+Monitoring uses Dynatrace OneAgent, with no app code or Python packages: FastAPI is monitored by OneAgent, which reports to the Dynatrace platform.
+
+1. In Dynatrace, open Deploy Dynatrace, then Install OneAgent, and run the installer on the host (for Docker, install it on the Docker host).
+2. Restart the app (`uvicorn app.main:app` or `docker compose up -d`). OneAgent only instruments processes started after it is installed.
+3. The service appears under Services within a few minutes.
 
 ## 📊 Evaluation
 

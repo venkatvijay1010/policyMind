@@ -17,6 +17,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas.schemas import KnowledgeSourceRequest, KnowledgeSourceResponse
+from app.application.source_documents import (
+    delete_stored_objects,
+    locate_texts,
+    new_text_source_document,
+    store_original,
+)
 from app.config import settings
 from app.infrastructure.database.models import (
     ContractPassage,
@@ -34,6 +40,8 @@ from app.infrastructure.documents.pdf_extractor import (
 )
 from app.infrastructure.llm.embeddings import get_embedding_service
 from app.infrastructure.rate_limit import limiter
+from app.infrastructure.search.vector_store import VectorStoreError, get_vector_store
+from app.infrastructure.storage.object_storage import StorageError, get_object_storage
 
 logger = structlog.get_logger()
 
@@ -238,22 +246,26 @@ async def _source_request_from_upload(
                 pages.append(page_text)
                 current_offset += len(page_text) + 2
             text_content = "\n\n".join(pages)
-            extraction_elements = [
-                {
-                    "page_number": element.page_number,
-                    "element_type": element.element_type,
-                    "text_content": element.text_content,
-                    "structured_data": element.structured_data,
-                    "bbox": element.bbox,
-                    "confidence": element.confidence,
-                    "parser_name": element.parser_name,
-                    "parser_version": element.parser_version,
-                    "extraction_version": EXTRACTION_VERSION,
-                    "needs_review": element.needs_review,
-                }
-                for page in extraction.pages
-                for element in page.elements
-            ]
+            for page_start, page in zip(page_starts, extraction.pages):
+                spans = locate_texts(page.text, [element.text_content for element in page.elements])
+                for element, span in zip(page.elements, spans):
+                    extraction_elements.append(
+                        {
+                            "page_number": element.page_number,
+                            "element_type": element.element_type,
+                            "text_content": element.text_content,
+                            "structured_data": element.structured_data,
+                            "bbox": element.bbox,
+                            # Offsets are in the stitched text that passage offsets refer to.
+                            "text_offset_start": page_start + span[0] if span else None,
+                            "text_offset_end": page_start + span[1] if span else None,
+                            "confidence": element.confidence,
+                            "parser_name": element.parser_name,
+                            "parser_version": element.parser_version,
+                            "extraction_version": EXTRACTION_VERSION,
+                            "needs_review": element.needs_review,
+                        }
+                    )
             extraction_hash = extraction.content_sha256
             extraction_page_count = extraction.page_count
             extraction_needs_review = extraction.needs_review
@@ -316,6 +328,11 @@ async def _index_contract_source(
     policy = result.fetchone()
     if not policy:
         raise HTTPException(status_code=404, detail=f"Knowledge scope {scope_key} not found")
+    try:
+        storage = get_object_storage()
+    except StorageError as exc:
+        logger.error("Object storage is misconfigured", error=str(exc))
+        raise HTTPException(status_code=503, detail="Document storage is not available") from exc
 
     text_content = source_request.source_text or await _fetch_source_text(
         source_request.source_uri or ""
@@ -359,7 +376,7 @@ async def _index_contract_source(
         text("DELETE FROM contract_passages WHERE contract_id = :contract_id"),
         {"contract_id": scope_key},
     )
-    source_document: SourceDocument | None = None
+    source_document: SourceDocument
     element_ids_by_page: dict[int, list[int]] = {}
     if source_request.original_bytes is not None:
         source_document = SourceDocument(
@@ -377,17 +394,26 @@ async def _index_contract_source(
             else "complete",
             needs_review=source_request.extraction_needs_review,
         )
-        db.add(source_document)
-        await db.flush()
-        created_elements = []
-        for item in source_request.extracted_elements:
-            element = DocumentElement(source_document_id=source_document.id, **item)
-            db.add(element)
-            created_elements.append(element)
-        await db.flush()
-        for element in created_elements:
-            element_ids_by_page.setdefault(element.page_number, []).append(element.id)
+    else:
+        # Text-only sources keep a stored copy too, so every citation can open its source.
+        source_document = new_text_source_document(
+            scope_key,
+            text_content,
+            f"{policy.contract_title or 'source'}.txt",
+            origin="source_text" if source_request.source_text else "source_uri",
+        )
+    db.add(source_document)
+    await db.flush()
+    created_elements = []
+    for item in source_request.extracted_elements:
+        element = DocumentElement(source_document_id=source_document.id, **item)
+        db.add(element)
+        created_elements.append(element)
+    await db.flush()
+    for element in created_elements:
+        element_ids_by_page.setdefault(element.page_number, []).append(element.id)
 
+    indexed_vectors: list[tuple[int, list[float]]] = []
     for chunk, embedding in zip(chunks, embeddings):
         passage = ContractPassage(
             contract_id=scope_key,
@@ -400,30 +426,52 @@ async def _index_contract_source(
             embedding=embedding,
         )
         db.add(passage)
-        if source_document is not None:
-            await db.flush()
-            source_pages = [chunk["source_page"]]
-            if source_request.source_page_starts:
-                first_page = max(
-                    1, bisect_right(source_request.source_page_starts, chunk["source_offset_start"])
+        await db.flush()
+        indexed_vectors.append((passage.id, embedding))
+        source_pages = [chunk["source_page"]]
+        if source_request.source_page_starts:
+            first_page = max(
+                1, bisect_right(source_request.source_page_starts, chunk["source_offset_start"])
+            )
+            last_page = max(
+                first_page,
+                bisect_right(
+                    source_request.source_page_starts,
+                    max(chunk["source_offset_start"], chunk["source_offset_end"] - 1),
+                ),
+            )
+            source_pages = list(range(first_page, last_page + 1))
+        for source_page in source_pages:
+            db.add(
+                PassageSource(
+                    passage_id=passage.id,
+                    source_document_id=source_document.id,
+                    page_number=source_page,
+                    element_ids=element_ids_by_page.get(source_page, []),
                 )
-                last_page = max(
-                    first_page,
-                    bisect_right(
-                        source_request.source_page_starts,
-                        max(chunk["source_offset_start"], chunk["source_offset_end"] - 1),
-                    ),
-                )
-                source_pages = list(range(first_page, last_page + 1))
-            for source_page in source_pages:
-                db.add(
-                    PassageSource(
-                        passage_id=passage.id,
-                        source_document_id=source_document.id,
-                        page_number=source_page,
-                        element_ids=element_ids_by_page.get(source_page, []),
-                    )
-                )
+            )
+
+    # Qdrant cannot join the database transaction; scripts/index_qdrant.py re-syncs after a
+    # failed commit.
+    vector_store = get_vector_store()
+    if vector_store is not None:
+        try:
+            await vector_store.replace_scope(scope_key, indexed_vectors)
+        except VectorStoreError as exc:
+            logger.exception("Vector index update failed", scope_key=scope_key)
+            raise HTTPException(
+                status_code=502, detail="Unable to update the vector index"
+            ) from exc
+
+    # Upload last so a failed index never leaves an object behind for an unsaved row.
+    if storage is not None:
+        try:
+            await store_original(source_document, storage)
+        except StorageError as exc:
+            logger.exception("Source document upload failed", scope_key=scope_key)
+            raise HTTPException(
+                status_code=502, detail="Unable to store the source document"
+            ) from exc
 
     processing_time = int((time.monotonic() - start_time) * 1000)
     logger.info(
@@ -438,10 +486,10 @@ async def _index_contract_source(
         segments_created=len(chunks),
         processing_time_ms=processing_time,
         message=f"Indexed {len(chunks)} segments for contract '{policy.contract_title}'",
-        source_document_id=source_document.id if source_document else None,
-        content_sha256=source_document.content_sha256 if source_document else None,
-        extraction_status=source_document.extraction_status if source_document else None,
-        needs_review=source_document.needs_review if source_document else False,
+        source_document_id=source_document.id,
+        content_sha256=source_document.content_sha256,
+        extraction_status=source_document.extraction_status,
+        needs_review=source_document.needs_review,
     )
 
 
@@ -533,6 +581,17 @@ async def ingest_file(
     return await _index_contract_source(scope_key, source_request, db)
 
 
+async def _drop_vectors(scope_key: int) -> None:
+    """Best effort: leftover points are ignored at query time because their rows are gone."""
+    store = get_vector_store()
+    if store is None:
+        return
+    try:
+        await store.delete_scope(scope_key)
+    except VectorStoreError:
+        logger.warning("Vector cleanup failed", scope_key=scope_key)
+
+
 @router.delete("/{scope_key}/source")
 @limiter.limit(settings.rate_limit)
 async def delete_chunks(
@@ -547,6 +606,7 @@ async def delete_chunks(
     )
     deleted = max(result.rowcount or 0, 0)
     await db.commit()
+    await _drop_vectors(scope_key)
 
     return {
         "scope_key": scope_key,
@@ -579,10 +639,26 @@ async def delete_uploaded_scope(
     if scope["plan_category"] != "UPLOADED_DOCUMENT":
         raise HTTPException(status_code=403, detail="Only uploaded documents can be deleted here")
 
+    stored = await db.execute(
+        text(
+            """
+            SELECT storage_bucket, storage_key
+            FROM source_documents
+            WHERE contract_id = :scope_key AND storage_key IS NOT NULL
+            """
+        ),
+        {"scope_key": scope_key},
+    )
+    stored_objects = [(row.storage_bucket, row.storage_key) for row in stored]
+
     await db.execute(
         text("DELETE FROM benefit_contracts WHERE id = :scope_key"),
         {"scope_key": scope_key},
     )
+    # Remove objects only after the rows are gone, so a failed delete never orphans a row.
+    await db.commit()
+    await delete_stored_objects(stored_objects)
+    await _drop_vectors(scope_key)
     return {
         "scope_key": scope_key,
         "message": f"Deleted uploaded document '{scope['contract_title'] or scope_key}'",

@@ -13,10 +13,21 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.domain.entities.models import DocumentChunk, SectionType
-from app.infrastructure.database.models import ContractPassage, PassageSource
+from app.infrastructure.database.models import ContractPassage, PassageSource, SourceDocument
 from app.infrastructure.llm.embeddings import get_embedding_service
+from app.infrastructure.search.vector_store import QdrantVectorStore, get_vector_store
 
 logger = structlog.get_logger()
+
+
+def _passage_load_options():
+    """Load passage provenance without pulling original document bytes into memory."""
+    return (
+        selectinload(ContractPassage.policy),
+        selectinload(ContractPassage.source_links)
+        .selectinload(PassageSource.source_document)
+        .defer(SourceDocument.original_bytes),
+    )
 
 
 @dataclass
@@ -49,10 +60,10 @@ class HybridSearch:
         beyond SQLite and is not intended for millions of passages.
         """
         query_embedding = await self.embedding_service.embed_query(query)
-        statement = select(ContractPassage).options(
-            selectinload(ContractPassage.policy),
-            selectinload(ContractPassage.source_links).selectinload(PassageSource.source_document),
-        )
+        store = get_vector_store()
+        if store is not None:
+            return await self._qdrant_search(store, query_embedding, contract_id, top_k)
+        statement = select(ContractPassage).options(*_passage_load_options())
         if contract_id is not None:
             statement = statement.where(ContractPassage.contract_id == contract_id)
         else:
@@ -77,6 +88,39 @@ class HybridSearch:
 
         ranked.sort(key=lambda item: item.score, reverse=True)
         return ranked[:top_k]
+
+    async def _qdrant_search(
+        self,
+        store: QdrantVectorStore,
+        query_embedding: list[float],
+        contract_id: Optional[int],
+        top_k: int,
+    ) -> List[SearchResult]:
+        """Rank in Qdrant, then load the passages from the database."""
+        hits = await store.search(query_embedding, contract_id, top_k)
+        if not hits:
+            return []
+        rows = await self.session.execute(
+            select(ContractPassage)
+            .options(*_passage_load_options())
+            .where(ContractPassage.id.in_([hit.passage_id for hit in hits]))
+        )
+        passages = {passage.id: passage for passage in rows.scalars().all()}
+
+        results: list[SearchResult] = []
+        for hit in hits:
+            passage = passages.get(hit.passage_id)
+            # Skip points left behind by a replaced scope whose row id was reused elsewhere.
+            if passage is None or passage.contract_id != hit.contract_id:
+                continue
+            results.append(
+                SearchResult(
+                    chunk=self._to_document_chunk(passage, hit.score),
+                    score=hit.score,
+                    source="vector",
+                )
+            )
+        return results
 
     @staticmethod
     def _embedding_values(value: object) -> Optional[list[float]]:
@@ -141,25 +185,11 @@ class HybridSearch:
         if contract_id:
             stmt = (
                 select(ContractPassage)
-                .options(
-                    selectinload(ContractPassage.policy),
-                    selectinload(ContractPassage.source_links).selectinload(
-                        PassageSource.source_document
-                    ),
-                )
+                .options(*_passage_load_options())
                 .where(ContractPassage.contract_id == contract_id)
             )
         else:
-            stmt = (
-                select(ContractPassage)
-                .options(
-                    selectinload(ContractPassage.policy),
-                    selectinload(ContractPassage.source_links).selectinload(
-                        PassageSource.source_document
-                    ),
-                )
-                .limit(1000)
-            )
+            stmt = select(ContractPassage).options(*_passage_load_options()).limit(1000)
 
         result = await self.session.execute(stmt)
         chunks = result.scalars().all()

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from sqlalchemy import text
 
+from app.application.source_documents import attach_text_source
 from app.infrastructure.database.postgres import async_session_factory, init_db
 from app.infrastructure.llm.embeddings import EmbeddingService
 from data.generators.eval_generator import generate_eval_questions
@@ -40,12 +41,16 @@ def chunk_text(
                 heading for heading in section_pattern.finditer(content) if heading.start() <= start
             ]
             section = preceding_headings[-1].group(1).strip() if preceding_headings else None
+            # Offsets must point at the stripped passage text so the source viewer can
+            # highlight exactly what a citation quotes.
+            passage_text = chunk.strip()
+            passage_start = start + len(chunk) - len(chunk.lstrip())
             chunks.append(
                 {
-                    "content": chunk.strip(),
+                    "content": passage_text,
                     "passage_order": len(chunks),
-                    "source_offset_start": start,
-                    "source_offset_end": end,
+                    "source_offset_start": passage_start,
+                    "source_offset_end": passage_start + len(passage_text),
                     "topic_title": section,
                 }
             )
@@ -183,30 +188,44 @@ async def seed_database():
                 chunk_texts = [c["content"] for c in chunks]
                 try:
                     embeddings = await embedding_service.embed_batch(chunk_texts)
-
-                    for chunk, embedding in zip(chunks, embeddings):
-                        await session.execute(
-                            text("""
-                                INSERT INTO contract_passages
-                                (contract_id, content, passage_order, source_offset_start, source_offset_end, topic_title, embedding)
-                                VALUES (:contract_id, :content, :idx, :start, :end, :topic_title, :embedding)
-                            """),
-                            {
-                                "contract_id": contract_id,
-                                "content": chunk["content"],
-                                "idx": chunk["passage_order"],
-                                "start": chunk["source_offset_start"],
-                                "end": chunk["source_offset_end"],
-                                "topic_title": chunk["topic_title"],
-                                "embedding": json.dumps(embedding),
-                            },
-                        )
-                        total_chunks += 1
                 except Exception as e:
                     print(f"   Warning: Could not generate embeddings: {e}")
                     print(
                         "   Skipping embedding generation (start Ollama and pull the embedding model)"
                     )
+                    continue
+
+                passage_ids = []
+                for chunk, embedding in zip(chunks, embeddings):
+                    inserted = await session.execute(
+                        text("""
+                            INSERT INTO contract_passages
+                            (contract_id, content, passage_order, source_offset_start, source_offset_end, topic_title, embedding)
+                            VALUES (:contract_id, :content, :idx, :start, :end, :topic_title, :embedding)
+                            RETURNING id
+                        """),
+                        {
+                            "contract_id": contract_id,
+                            "content": chunk["content"],
+                            "idx": chunk["passage_order"],
+                            "start": chunk["source_offset_start"],
+                            "end": chunk["source_offset_end"],
+                            "topic_title": chunk["topic_title"],
+                            "embedding": json.dumps(embedding),
+                        },
+                    )
+                    passage_ids.append(inserted.scalar())
+                    total_chunks += 1
+
+                # Keep the generated policy text so citations can open the exact passage.
+                await attach_text_source(
+                    session,
+                    contract_id,
+                    contract["source_text"],
+                    f"{contract['contract_title']}.md",
+                    passage_ids,
+                    origin="seed",
+                )
 
             await session.commit()
             print(f"   Seeded {total_chunks} contract passages")

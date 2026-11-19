@@ -113,6 +113,13 @@ class SourceDocument(Base):
     extraction_version: Mapped[Optional[str]] = mapped_column(String(50))
     extraction_status: Mapped[str] = mapped_column(String(30), default="complete", nullable=False)
     needs_review: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Where the original bytes live outside the database. NULL storage_key means the
+    # original is only available from original_bytes.
+    storage_backend: Mapped[Optional[str]] = mapped_column(String(20))
+    storage_bucket: Mapped[Optional[str]] = mapped_column(String(255))
+    storage_key: Mapped[Optional[str]] = mapped_column(String(1024))
+    storage_etag: Mapped[Optional[str]] = mapped_column(String(100))
+    storage_uploaded_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     policy: Mapped["Policy"] = relationship("Policy", back_populates="source_documents")
@@ -138,6 +145,10 @@ class DocumentElement(Base):
     text_content: Mapped[str] = mapped_column(Text, default="", nullable=False)
     structured_data: Mapped[Optional[dict]] = mapped_column(JSON)
     bbox: Mapped[Optional[list]] = mapped_column(JSON)
+    # Character range of text_content inside the stitched document text that passage
+    # offsets (ContractPassage.source_offset_*) refer to.
+    text_offset_start: Mapped[Optional[int]] = mapped_column(Integer)
+    text_offset_end: Mapped[Optional[int]] = mapped_column(Integer)
     confidence: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
     parser_name: Mapped[str] = mapped_column(String(100), nullable=False)
     parser_version: Mapped[Optional[str]] = mapped_column(String(50))

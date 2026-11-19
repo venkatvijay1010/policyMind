@@ -14,12 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.api.routes import ask, health, ingest
+from app.api.routes import ask, health, ingest, sources
 from app.api.routes import eval as eval_route
 from app.application.warm_up import warm_up_models
 from app.config import settings
 from app.infrastructure.database.postgres import close_db, init_db
 from app.infrastructure.rate_limit import limiter
+from app.infrastructure.search.vector_store import close_vector_store
 
 # Configure structured logging
 structlog.configure(
@@ -62,6 +63,7 @@ async def lifespan(app: FastAPI):
     if warm_up_task:
         warm_up_task.cancel()
         await asyncio.gather(warm_up_task, return_exceptions=True)
+    await close_vector_store()
     await close_db()
 
 
@@ -98,6 +100,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(ingest.router, prefix="/api/v2", tags=["Knowledge"])
+app.include_router(sources.router, prefix="/api/v2", tags=["Knowledge"])
 app.include_router(ask.router, prefix="/api/v2", tags=["Insights"])
 app.include_router(eval_route.router, prefix="/api/v2", tags=["Evaluation"])
 

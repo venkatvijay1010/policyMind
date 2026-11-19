@@ -29,6 +29,17 @@ const commandResults = document.querySelector("#command-results");
 const confirmDialog = document.querySelector("#confirm-dialog");
 const confirmCopy = document.querySelector("#confirm-copy");
 const themeToggle = document.querySelector("#theme-toggle");
+const sourceViewer = document.querySelector("#source-viewer");
+const sourceViewerTitle = document.querySelector("#source-viewer-title");
+const sourceViewerSubtitle = document.querySelector("#source-viewer-subtitle");
+const sourceViewerOriginal = document.querySelector("#source-viewer-original");
+const sourceViewerClose = document.querySelector("#source-viewer-close");
+const sourceViewerPager = document.querySelector("#source-viewer-pager");
+const sourceViewerPrev = document.querySelector("#source-viewer-prev");
+const sourceViewerNext = document.querySelector("#source-viewer-next");
+const sourceViewerPage = document.querySelector("#source-viewer-page");
+const sourceViewerBody = document.querySelector("#source-viewer-body");
+const sourceViewerStatus = document.querySelector("#source-viewer-status");
 
 let isSending = false;
 let activeController = null;
@@ -37,6 +48,10 @@ let uploadProgressTimer = null;
 let conversationHistory = [];
 let commandItems = [];
 let selectedCommandIndex = 0;
+let activeSource = null;
+let sourceRenderToken = 0;
+
+const SOURCES_API = "/api/v2/knowledge/sources";
 
 const THEME_STORAGE_KEY = "policymind-theme";
 
@@ -222,6 +237,155 @@ function updateSendButton() {
   sendButton.disabled = !promptInput.value.trim();
 }
 
+function setSourceStatus(message = "", tone = "") {
+  sourceViewerStatus.textContent = message;
+  sourceViewerStatus.dataset.tone = tone;
+}
+
+function clearSourceImage() {
+  if (activeSource?.imageUrl) URL.revokeObjectURL(activeSource.imageUrl);
+  if (activeSource) activeSource.imageUrl = "";
+}
+
+function resetSourceViewer() {
+  sourceRenderToken += 1;
+  clearSourceImage();
+  activeSource = null;
+  sourceViewerBody.replaceChildren();
+  sourceViewerPager.hidden = true;
+  sourceViewerOriginal.hidden = true;
+  setSourceStatus();
+}
+
+function sourceErrorMessage(body, fallback) {
+  return typeof body?.detail === "string" && body.detail ? body.detail : fallback;
+}
+
+async function showPdfPage(page) {
+  const source = activeSource;
+  if (!source || source.kind !== "pdf") return;
+  const target = source.pageCount > 0 ? Math.min(Math.max(1, page), source.pageCount) : Math.max(1, page);
+  const token = ++sourceRenderToken;
+  sourceViewerPrev.disabled = true;
+  sourceViewerNext.disabled = true;
+  setSourceStatus(`Loading page ${target}...`);
+
+  try {
+    const query = source.passageId ? `?passage_id=${encodeURIComponent(source.passageId)}` : "";
+    const response = await fetch(`${SOURCES_API}/${encodeURIComponent(source.documentId)}/pages/${target}/image${query}`);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(sourceErrorMessage(body, "This page could not be displayed."));
+    }
+    const highlights = Number(response.headers.get("X-Highlight-Count")) || 0;
+    const highlightTop = Number.parseFloat(response.headers.get("X-Highlight-Top"));
+    const blob = await response.blob();
+    if (token !== sourceRenderToken) return;
+
+    const imageUrl = URL.createObjectURL(blob);
+    const image = new Image();
+    image.className = "viewer-page";
+    image.alt = `Page ${target} of ${source.filename}${highlights ? ", with the cited paragraph highlighted" : ""}`;
+    image.src = imageUrl;
+    await image.decode().catch(() => {});
+    if (token !== sourceRenderToken) {
+      URL.revokeObjectURL(imageUrl);
+      return;
+    }
+
+    clearSourceImage();
+    source.imageUrl = imageUrl;
+    source.page = target;
+    sourceViewerBody.replaceChildren(image);
+    sourceViewerBody.scrollTop = Number.isFinite(highlightTop)
+      ? Math.max(0, image.offsetTop + image.clientHeight * highlightTop - sourceViewerBody.clientHeight * 0.25)
+      : 0;
+    sourceViewerPage.textContent = source.pageCount > 0 ? `Page ${target} of ${source.pageCount}` : `Page ${target}`;
+
+    if (highlights) setSourceStatus("The cited paragraph is highlighted on this page.", "success");
+    else if (source.passageId && target === source.citedPage) setSourceStatus("This is the cited page. The exact paragraph could not be marked.");
+    else setSourceStatus();
+  } catch (error) {
+    if (token !== sourceRenderToken) return;
+    setSourceStatus(error instanceof Error ? error.message : "This page could not be displayed.", "error");
+  } finally {
+    if (token === sourceRenderToken && activeSource === source) {
+      sourceViewerPrev.disabled = source.page <= 1;
+      sourceViewerNext.disabled = source.pageCount > 0 && source.page >= source.pageCount;
+    }
+  }
+}
+
+function renderTextSource(info) {
+  const text = info.text || "";
+  const pre = document.createElement("pre");
+  pre.className = "viewer-text";
+  let mark = null;
+  if (info.highlighted && Number.isInteger(info.highlight_start) && Number.isInteger(info.highlight_end)) {
+    mark = document.createElement("mark");
+    mark.className = "viewer-mark";
+    mark.textContent = text.slice(info.highlight_start, info.highlight_end);
+    pre.append(text.slice(0, info.highlight_start), mark, text.slice(info.highlight_end));
+  } else {
+    pre.textContent = text;
+  }
+  sourceViewerBody.replaceChildren(pre);
+  if (mark) sourceViewerBody.scrollTop = Math.max(0, mark.offsetTop - sourceViewerBody.clientHeight * 0.3);
+  if (mark) setSourceStatus("The cited paragraph is highlighted.", "success");
+  else setSourceStatus("The exact paragraph could not be marked in this document.");
+}
+
+async function openSource(documentId, passageId = "", title = "") {
+  if (!sourceViewer?.showModal) {
+    window.open(`${SOURCES_API}/${encodeURIComponent(documentId)}/file`, "_blank", "noopener");
+    return;
+  }
+  resetSourceViewer();
+  const token = ++sourceRenderToken;
+  sourceViewerTitle.textContent = title || "Source document";
+  sourceViewerSubtitle.textContent = "";
+  setSourceStatus("Opening the source document...");
+  if (!sourceViewer.open) sourceViewer.showModal();
+
+  try {
+    const query = passageId ? `?passage_id=${encodeURIComponent(passageId)}` : "";
+    const response = await fetch(`${SOURCES_API}/${encodeURIComponent(documentId)}/open${query}`);
+    const info = await response.json().catch(() => ({}));
+    if (token !== sourceRenderToken) return;
+    if (!response.ok) throw new Error(sourceErrorMessage(info, "Unable to open that source document."));
+
+    const firstPage = info.page || 1;
+    activeSource = {
+      documentId: info.source_document_id,
+      passageId: info.passage_id || "",
+      kind: info.kind,
+      filename: info.filename,
+      pageCount: info.page_count || 0,
+      citedPage: firstPage,
+      page: firstPage,
+      imageUrl: "",
+    };
+    sourceViewerTitle.textContent = title || info.filename;
+    sourceViewerSubtitle.textContent = [info.section ? `Section: ${info.section}` : "", info.filename]
+      .filter(Boolean)
+      .join(" \u00b7 ");
+    sourceViewerOriginal.href = info.kind === "pdf" ? `${info.file_url}#page=${firstPage}` : info.file_url;
+    sourceViewerOriginal.hidden = false;
+
+    if (info.kind === "pdf") {
+      sourceViewerPager.hidden = false;
+      await showPdfPage(firstPage);
+    } else {
+      renderTextSource(info);
+    }
+  } catch (error) {
+    if (token !== sourceRenderToken) return;
+    const message = error instanceof Error ? error.message : "Unable to open that source document.";
+    setSourceStatus(message, "error");
+    showToast(message, "error");
+  }
+}
+
 function rememberConversationTurn(role, content) {
   const normalized = String(content || "").trim();
   if (!normalized) return;
@@ -321,6 +485,15 @@ function resultMeta(result) {
   return `<span class="query-type">${escapeHtml(type)}</span>${latency}`;
 }
 
+function citationActionMarkup(citation, index) {
+  if (!citation.source_document_id) return "";
+  const page = citation.page ? ` &middot; page ${escapeHtml(citation.page)}` : "";
+  return `
+    <div class="citation-actions">
+      <button class="citation-open" type="button" data-source-document-id="${escapeHtml(citation.source_document_id)}" data-passage-id="${escapeHtml(citation.passage_id ?? "")}" data-title="${escapeHtml(citation.contract_title || "")}" aria-label="Open the source document for evidence ${index + 1}">Open source${page}</button>
+    </div>`;
+}
+
 function citationsMarkup(citations) {
   if (!Array.isArray(citations) || citations.length === 0) return "";
 
@@ -337,6 +510,7 @@ function citationsMarkup(citations) {
             <span class="citation-detail"><span aria-hidden="true">&#9636;</span> ${citation.page ? `Page ${escapeHtml(citation.page)}` : `Passage ${index + 1}`}</span>
           </div>
           <p class="citation-excerpt">${escapeHtml(citation.chunk_text || "")}</p>
+          ${citationActionMarkup(citation, index)}
         </details>
       `,
     )
@@ -694,7 +868,33 @@ commandPalette.addEventListener("click", (event) => {
 confirmDialog.addEventListener("click", (event) => {
   if (event.target === confirmDialog) confirmDialog.close("cancel");
 });
+sourceViewerClose.addEventListener("click", () => sourceViewer.close());
+sourceViewer.addEventListener("click", (event) => {
+  if (event.target === sourceViewer) sourceViewer.close();
+});
+sourceViewer.addEventListener("close", resetSourceViewer);
+sourceViewerPrev.addEventListener("click", () => activeSource && showPdfPage(activeSource.page - 1));
+sourceViewerNext.addEventListener("click", () => activeSource && showPdfPage(activeSource.page + 1));
+sourceViewer.addEventListener("keydown", (event) => {
+  if (activeSource?.kind !== "pdf" || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.key === "ArrowLeft" && !sourceViewerPrev.disabled) {
+    event.preventDefault();
+    showPdfPage(activeSource.page - 1);
+  } else if (event.key === "ArrowRight" && !sourceViewerNext.disabled) {
+    event.preventDefault();
+    showPdfPage(activeSource.page + 1);
+  }
+});
 messages.addEventListener("click", (event) => {
+  const openButton = event.target.closest(".citation-open");
+  if (openButton) {
+    openSource(
+      openButton.dataset.sourceDocumentId,
+      openButton.dataset.passageId || "",
+      openButton.dataset.title || "",
+    );
+    return;
+  }
   const button = event.target.closest(".onboarding-action");
   if (!button) return;
   if (button.dataset.command === "upload") {

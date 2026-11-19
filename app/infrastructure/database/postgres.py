@@ -8,7 +8,7 @@ development database is SQLite. PostgreSQL can still be selected through
 from pathlib import Path
 from typing import AsyncGenerator
 
-from sqlalchemy import MetaData, event
+from sqlalchemy import MetaData, event, inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -78,6 +78,38 @@ async def init_db() -> None:
 
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(add_missing_columns)
+
+
+# Nullable columns added after a table first shipped. create_all never alters existing
+# tables, so databases created by an older version receive them here.
+_ADDITIVE_COLUMNS: dict[str, tuple[str, ...]] = {
+    "source_documents": (
+        "storage_backend",
+        "storage_bucket",
+        "storage_key",
+        "storage_etag",
+        "storage_uploaded_at",
+    ),
+    "document_elements": ("text_offset_start", "text_offset_end"),
+}
+
+
+def add_missing_columns(connection) -> None:
+    """Add any nullable column that an older database is missing (idempotent)."""
+    inspector = inspect(connection)
+    for table_name, column_names in _ADDITIVE_COLUMNS.items():
+        if not inspector.has_table(table_name):
+            continue
+        existing = {column["name"] for column in inspector.get_columns(table_name)}
+        for column_name in column_names:
+            if column_name in existing:
+                continue
+            column_type = Base.metadata.tables[table_name].c[column_name].type
+            compiled = column_type.compile(dialect=connection.dialect)
+            connection.execute(
+                text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {compiled}")
+            )
 
 
 async def close_db() -> None:

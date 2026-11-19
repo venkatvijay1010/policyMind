@@ -51,6 +51,7 @@ class CitationBuilder:
                 relevance_score=chunk.score or 0.0,
                 source_document_id=chunk.source_document_id,
                 source_filename=chunk.source_filename,
+                passage_id=chunk.id,
             )
             citations.append(citation)
 
@@ -92,6 +93,7 @@ class CitationBuilder:
                 else None,
                 "source_document_id": citation.source_document_id,
                 "source_filename": citation.source_filename,
+                "passage_id": citation.passage_id,
             }
             for citation in citations
         ]

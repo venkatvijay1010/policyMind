@@ -98,6 +98,7 @@ class Citation:
     relevance_score: float = 0.0
     source_document_id: Optional[int] = None
     source_filename: Optional[str] = None
+    passage_id: Optional[int] = None
 
 
 @dataclass

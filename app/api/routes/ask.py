@@ -69,6 +69,7 @@ def _to_insight_response(result) -> InsightQueryResponse:
             relevance_score=c.relevance_score,
             source_document_id=c.source_document_id,
             source_filename=c.source_filename,
+            passage_id=c.passage_id,
         )
         for c in result.citations
     ]
@@ -349,6 +350,7 @@ async def rag_only(
             relevance_score=c.relevance_score,
             source_document_id=c.source_document_id,
             source_filename=c.source_filename,
+            passage_id=c.passage_id,
         )
         for c in result.citations
     ]

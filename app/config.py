@@ -5,7 +5,7 @@ Application configuration using Pydantic Settings.
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -88,8 +88,33 @@ class Settings(BaseSettings):
     pdf_min_native_chars_per_page: int = Field(default=40, ge=0, le=10000)
     pdf_ocr_review_confidence: float = Field(default=60.0, ge=0, le=100)
 
+    # Source document storage. "database" keeps originals in the database only; "s3" also
+    # writes each original to a private bucket. AWS credentials come from the standard
+    # credential chain (environment, shared profile or IAM role), never from these settings.
+    storage_backend: Literal["database", "s3"] = "database"
+    s3_bucket: str = ""
+    s3_region: str = ""
+    s3_prefix: str = "source-documents"
+    s3_endpoint_url: str = ""
+
+    # Vector index. "database" ranks the JSON embeddings stored with each passage; "qdrant"
+    # searches a Qdrant collection (the database stays the source of truth for passages).
+    # QDRANT_URL is a server URL such as http://localhost:6333, or ":memory:" for tests.
+    vector_backend: Literal["database", "qdrant"] = "database"
+    qdrant_url: str = ""
+    qdrant_api_key: str = ""
+    qdrant_collection: str = "policymind_passages"
+
     # CORS
     cors_origins: str = "*"  # Comma-separated list of origins, or * for all
+
+    @model_validator(mode="after")
+    def require_bucket_for_s3(self) -> "Settings":
+        if self.storage_backend == "s3" and not self.s3_bucket.strip():
+            raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")
+        if self.vector_backend == "qdrant" and not self.qdrant_url.strip():
+            raise ValueError("QDRANT_URL is required when VECTOR_BACKEND=qdrant")
+        return self
 
     @property
     def cors_origins_list(self) -> list[str]:

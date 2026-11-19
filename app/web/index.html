@@ -197,6 +197,27 @@
       </form>
     </dialog>
 
+    <dialog class="source-viewer" id="source-viewer" aria-labelledby="source-viewer-title">
+      <header class="viewer-header">
+        <div class="viewer-heading">
+          <p class="eyebrow">Evidence source</p>
+          <h2 id="source-viewer-title">Source document</h2>
+          <p class="viewer-subtitle" id="source-viewer-subtitle"></p>
+        </div>
+        <div class="viewer-actions">
+          <a class="dialog-button viewer-original" id="source-viewer-original" href="#" target="_blank" rel="noopener" hidden>Open original</a>
+          <button class="dialog-close" id="source-viewer-close" type="button" aria-label="Close source viewer">&#215;</button>
+        </div>
+      </header>
+      <nav class="viewer-pager" id="source-viewer-pager" aria-label="Page navigation" hidden>
+        <button class="dialog-button" id="source-viewer-prev" type="button">&larr; Previous</button>
+        <span id="source-viewer-page" aria-live="polite"></span>
+        <button class="dialog-button" id="source-viewer-next" type="button">Next &rarr;</button>
+      </nav>
+      <div class="viewer-body" id="source-viewer-body" tabindex="0"></div>
+      <p class="viewer-status" id="source-viewer-status" role="status"></p>
+    </dialog>
+
     <template id="loading-template">
       <article class="message assistant-message loading-message" role="status">
         <div class="avatar avatar-thinking" aria-hidden="true">P</div>

@@ -95,6 +95,7 @@ class Citation(BaseModel):
     relevance_score: float
     source_document_id: Optional[int] = None
     source_filename: Optional[str] = None
+    passage_id: Optional[int] = None
 
 
 class InsightQueryResponse(BaseModel):
@@ -181,6 +182,25 @@ class KnowledgeSourceResponse(BaseModel):
     content_sha256: Optional[str] = None
     extraction_status: Optional[str] = None
     needs_review: bool = False
+
+
+class SourceOpenResponse(BaseModel):
+    """Everything the viewer needs to show the exact evidence inside its source document."""
+
+    source_document_id: int
+    filename: str
+    kind: Literal["pdf", "text"]
+    file_url: str
+    passage_id: Optional[int] = None
+    section: Optional[str] = None
+    page: Optional[int] = None
+    page_count: Optional[int] = None
+    # True when the cited paragraph could be located and marked in the source.
+    highlighted: bool = False
+    # Text sources only: the full text and the cited range in UTF-16 code units.
+    text: Optional[str] = None
+    highlight_start: Optional[int] = None
+    highlight_end: Optional[int] = None
 
 
 # === Evaluation Endpoint Schemas ===
