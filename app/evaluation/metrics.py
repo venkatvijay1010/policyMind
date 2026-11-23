@@ -115,7 +115,7 @@ def ndcg_at_k(retrieved_ids: List[int], relevance: dict[int, int], k: int = 10) 
     """NDCG@k with graded relevance (id -> grade); 0.0 when nothing relevant exists."""
 
     def dcg(grades: List[int]) -> float:
-        return sum((2**grade - 1) / log2(rank + 2) for rank, grade in enumerate(grades))
+        return float(sum((2**grade - 1) / log2(rank + 2) for rank, grade in enumerate(grades)))
 
     ideal = dcg(sorted((g for g in relevance.values() if g > 0), reverse=True)[:k])
     if ideal == 0:
