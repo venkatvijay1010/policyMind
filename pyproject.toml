@@ -59,6 +59,7 @@ dev = [
     "black>=24.1.0",
     "ruff>=0.1.14",
     "mypy>=1.8.0",
+    "opentelemetry-sdk>=1.25.0",
 ]
 
 eval = [
