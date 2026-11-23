@@ -19,7 +19,10 @@ from app.application.agents.rag_agent import RAGAgent
 from app.application.agents.sql_agent import SQLAgent
 from app.config import settings
 from app.domain.entities.models import ClassificationResult, QueryResult, QueryType
+from app.domain.services.answer_validator import unsupported_numbers
 from app.domain.services.citation_builder import CitationBuilder
+from app.infrastructure import metrics
+from app.infrastructure.telemetry import tracer
 
 logger = structlog.get_logger()
 
@@ -139,10 +142,11 @@ class PolicyMindGraph:
     async def _classify_node(self, state: GraphState) -> dict:
         """Classification node - determines query type."""
         try:
-            classification = await asyncio.wait_for(
-                self.classifier.classify(state["query"], state.get("conversation", [])),
-                timeout=settings.node_timeout_seconds,
-            )
+            with tracer.start_as_current_span("node.classify"):
+                classification = await asyncio.wait_for(
+                    self.classifier.classify(state["query"], state.get("conversation", [])),
+                    timeout=settings.node_timeout_seconds,
+                )
 
             logger.info(
                 "Query classified",
@@ -196,6 +200,7 @@ class PolicyMindGraph:
         return "failure"
 
     def _retry_node(self, state: GraphState) -> dict:
+        metrics.RETRIES.inc()
         return {"attempts": state.get("attempts", 0) + 1, "current_node": "retry"}
 
     def _after_finalization(self, state: GraphState) -> str:
@@ -217,8 +222,20 @@ class PolicyMindGraph:
                 "error_code": "invalid_citations",
                 "error": "The answer contains invalid source references.",
             }
+        if result.query_type == QueryType.RECORDS_SQL and result.sql_result:
+            # Log-only: derived figures (sums, percentages) would be false positives if enforced.
+            ungrounded = unsupported_numbers(
+                result.answer, [state["query"], *(row.values() for row in result.sql_result)]
+            )
+            if ungrounded:
+                logger.warning(
+                    "Answer figures not found in SQL evidence",
+                    request_id=state.get("request_id"),
+                    numbers=ungrounded[:10],
+                )
         result.latency_ms = int((perf_counter() - state.get("started_at", perf_counter())) * 1000)
         result.query = state["query"]
+        metrics.REQUEST_SECONDS.labels(result.query_type.value).observe(result.latency_ms / 1000)
         logger.info(
             "Query completed",
             request_id=state.get("request_id"),
@@ -229,6 +246,7 @@ class PolicyMindGraph:
         return {"result": result, "error": None, "error_code": None, "current_node": "finalize"}
 
     def _failure_node(self, state: GraphState) -> dict:
+        metrics.FAILURES.labels(state.get("error_code") or "execution_failed").inc()
         logger.warning(
             "Query failed",
             request_id=state.get("request_id"),
@@ -249,8 +267,11 @@ class PolicyMindGraph:
         operation: Callable[[], Awaitable[QueryResult]],
     ) -> dict:
         started = perf_counter()
+        outcome = "error"
         try:
-            result = await asyncio.wait_for(operation(), timeout=settings.node_timeout_seconds)
+            with tracer.start_as_current_span(f"node.{name}"):
+                result = await asyncio.wait_for(operation(), timeout=settings.node_timeout_seconds)
+            outcome = "ok"
             return {
                 "result": result,
                 "error": None,
@@ -279,6 +300,7 @@ class PolicyMindGraph:
                 "current_node": name,
             }
         finally:
+            metrics.NODE_SECONDS.labels(name, outcome).observe(perf_counter() - started)
             logger.info(
                 "Node execution metric",
                 node=name,

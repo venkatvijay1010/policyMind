@@ -263,7 +263,7 @@ async def test_llm_routing_transport_uses_context_and_schema(monkeypatch, mode):
     assert kwargs["max_tokens"] > 96
     assert kwargs["response_format"]["type"] == mode
     system = kwargs["messages"][0]["content"]
-    assert "Routing policy: evidence-v2" in system
+    assert "Routing policy: evidence-v3" in system
     assert json.dumps(schema) not in system
     # Uncached local prefill is ~27 tokens/s, so growth here is user-visible latency.
     assert len(system) < 3300

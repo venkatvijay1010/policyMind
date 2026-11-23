@@ -1,9 +1,15 @@
 """Fast, local reranking for a bounded set of retrieved policy chunks."""
 
 import re
-from typing import List
+from functools import lru_cache
+from typing import List, Union
 
+import structlog
+
+from app.config import settings
 from app.domain.entities.models import DocumentChunk
+
+logger = structlog.get_logger()
 
 _TOKEN_PATTERN = re.compile(r"[\w]+", re.UNICODE)
 _STOP_WORDS = {
@@ -77,3 +83,42 @@ class LocalReranker:
 
         scored.sort(key=lambda item: (-item[0], item[1]))
         return [chunk for _, _, chunk in scored[:top_k]]
+
+
+@lru_cache(maxsize=1)
+def _load_cross_encoder(model_name: str):
+    # Optional dependency: pip install sentence-transformers
+    from sentence_transformers import CrossEncoder
+
+    return CrossEncoder(model_name)
+
+
+class CrossEncoderReranker:
+    """Optional model-based reranker; falls back to LocalReranker when it is not worth using."""
+
+    def __init__(self, model_name: str, min_candidates: int):
+        self._model_name = model_name
+        self._min_candidates = min_candidates
+        self._fallback = LocalReranker()
+        self._unavailable = False
+
+    def rerank(self, query: str, chunks: List[DocumentChunk], top_k: int) -> List[DocumentChunk]:
+        if self._unavailable or len(chunks) < self._min_candidates:
+            return self._fallback.rerank(query, chunks, top_k)
+        try:
+            model = _load_cross_encoder(self._model_name)
+            scores = model.predict([(query, chunk.content) for chunk in chunks])
+        except Exception as exc:
+            logger.warning("Cross-encoder unavailable; using local reranker", error=str(exc))
+            self._unavailable = True
+            return self._fallback.rerank(query, chunks, top_k)
+        ranked = sorted(zip(scores, range(len(chunks))), key=lambda item: (-item[0], item[1]))
+        return [chunks[index] for _, index in ranked[: max(top_k, 0)]]
+
+
+def get_reranker() -> Union[LocalReranker, CrossEncoderReranker]:
+    if settings.reranker == "cross_encoder":
+        return CrossEncoderReranker(
+            settings.cross_encoder_model, settings.cross_encoder_min_candidates
+        )
+    return LocalReranker()

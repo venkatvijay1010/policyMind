@@ -6,6 +6,7 @@ without requiring an OpenAI API key.
 """
 
 import json
+from time import perf_counter
 from typing import Any, Optional, Sequence, cast
 
 import structlog
@@ -13,9 +14,11 @@ from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLim
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
+from app.infrastructure.metrics import record_llm_call
+from app.infrastructure.telemetry import tracer
 
 logger = structlog.get_logger()
-ROUTING_POLICY_VERSION = "evidence-v2"
+ROUTING_POLICY_VERSION = "evidence-v3"
 
 
 class LLMClient:
@@ -56,7 +59,19 @@ class LLMClient:
             prompt_length=sum(len(message["content"]) for message in messages),
         )
 
-        response = await self.client.chat.completions.create(**kwargs)
+        started = perf_counter()
+        with tracer.start_as_current_span("llm.chat") as span:
+            response = await self.client.chat.completions.create(**kwargs)
+            span.set_attribute("llm.model", self.chat_model)
+            if response.usage:
+                span.set_attribute("llm.prompt_tokens", response.usage.prompt_tokens)
+                span.set_attribute("llm.completion_tokens", response.usage.completion_tokens)
+        record_llm_call(
+            self.chat_model,
+            perf_counter() - started,
+            response.usage.prompt_tokens if response.usage else None,
+            response.usage.completion_tokens if response.usage else None,
+        )
 
         content = cast(Optional[str], response.choices[0].message.content)
         if content is None:
@@ -175,8 +190,8 @@ the meaning of the request, never from individual words.
 
 query_type:
 - chat: needs no private policy documents or service-case records. Greetings, small talk,
-  thanks, general requests for help, questions about the assistant or what it can do, general
-  knowledge and creative requests. Never guess private policy or record facts.
+  thanks, help requests, questions about the assistant, general knowledge and creative
+  requests. Never guess private policy or record facts.
 - document_qa: what the policy documents say: terms, benefits, definitions, exclusions, limits
   or procedures.
 - records_sql: figures computed over many service-case rows (one row per case with provider,
@@ -191,12 +206,12 @@ Rules:
    Otherwise, for document_qa, records_sql and hybrid, set resolved_query to the latest query
    rewritten to stand alone (copy it if it already does). Keep its intent and explicit
    constraints; never invent facts, dates, benefit names or filters. chat needs none.
-3. Clarify only when a policy or records question depends on something it does not name
-   ("it", "that", "its") and earlier turns do not supply it. A missing optional filter such as
-   a year, region or provider is never a reason to clarify; answer over all available data.
+3. Clarify only when the query points back to something it never names ("it", "its",
+   "that") and earlier turns do not supply it. A query naming its own topic, even broadly
+   ("benefit cap options", "what is covered"), is complete: route it. Never ask which
+   document; search covers all. A missing year, region or provider is never a reason to clarify.
    Social messages (greetings, thanks, small talk) are chat, even right after a data question.
-   These tools cannot change records: for a write request, clarify which read-only information
-   the user needs.
+   For a write request, clarify which read-only information the user needs.
 4. Reply with one JSON object and nothing else. Omit fields that would be null.
 
 Output shapes:
@@ -208,6 +223,7 @@ Examples (conversation empty unless shown):
 "Tell me a joke" -> {"decision": "route", "query_type": "chat"}
 "How many days is the waiting period?" -> {"decision": "route", "query_type": "document_qa"}
 "Summarize this policy" -> {"decision": "route", "query_type": "document_qa"}
+"What benefit cap options are available?" -> {"decision": "route", "query_type": "document_qa"}
 "Rank providers by denied claims" -> {"decision": "route", "query_type": "records_sql"}
 "Count declined cases and explain the relevant policy exclusions" -> {"decision": "route", "query_type": "hybrid"}
 "What is its limit?" -> {"decision": "clarify", "clarification_question": "Which benefit do you mean?"}

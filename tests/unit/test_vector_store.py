@@ -134,3 +134,15 @@ async def test_hybrid_vector_search_uses_qdrant_and_skips_stale_points(store, mo
 def test_qdrant_backend_requires_a_url():
     with pytest.raises(ValidationError, match="QDRANT_URL"):
         Settings(_env_file=None, vector_backend="qdrant", qdrant_url="")
+
+
+async def test_exact_search_matches_the_approximate_result_on_a_tiny_collection(store):
+    await store.replace_scope(1, [(10, [1.0, 0.0]), (11, [0.7, 0.7]), (12, [0.0, 1.0])])
+    approximate = await store.search([1.0, 0.0], contract_id=None, limit=3, hnsw_ef=16)
+    exact = await store.search([1.0, 0.0], contract_id=None, limit=3, exact=True)
+    assert [h.passage_id for h in approximate] == [h.passage_id for h in exact]
+
+
+async def test_sample_vectors_returns_stored_vectors(store):
+    await store.replace_scope(1, [(10, [1.0, 0.0]), (11, [0.0, 1.0])])
+    assert len(await store.sample_vectors(5)) == 2

@@ -3,7 +3,7 @@ Evaluation metrics for PolicyMind.
 """
 
 from dataclasses import dataclass
-from math import ceil, floor
+from math import ceil, floor, log2
 from statistics import mean, median
 from typing import List, Optional
 
@@ -109,6 +109,18 @@ def compute_retrieval_metrics(
         mrr=round(mrr, 4),
         hit_rate=hit_rate,
     )
+
+
+def ndcg_at_k(retrieved_ids: List[int], relevance: dict[int, int], k: int = 10) -> float:
+    """NDCG@k with graded relevance (id -> grade); 0.0 when nothing relevant exists."""
+
+    def dcg(grades: List[int]) -> float:
+        return sum((2**grade - 1) / log2(rank + 2) for rank, grade in enumerate(grades))
+
+    ideal = dcg(sorted((g for g in relevance.values() if g > 0), reverse=True)[:k])
+    if ideal == 0:
+        return 0.0
+    return round(dcg([relevance.get(doc_id, 0) for doc_id in retrieved_ids[:k]]) / ideal, 4)
 
 
 def aggregate_metrics(metrics_list: List[EvaluationMetrics]) -> EvaluationMetrics:

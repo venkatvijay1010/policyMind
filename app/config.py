@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=220, ge=64, le=4000)
     # Prime the local model and prompt caches at startup so the first message is not cold.
     warm_up_on_startup: bool = True
+    # USD per 1k tokens; 0 for local models. Set for hosted models to track spend.
+    llm_cost_per_1k_input: float = Field(default=0.0, ge=0)
+    llm_cost_per_1k_output: float = Field(default=0.0, ge=0)
+    # /metrics is unauthenticated; restrict it at the gateway or disable it when exposed.
+    metrics_enabled: bool = True
 
     # Chunking
     chunk_size: int = 500
@@ -62,7 +67,23 @@ class Settings(BaseSettings):
     top_k_retrieval: int = 3
     similarity_threshold: float = 0.7
     rerank_candidate_multiplier: int = Field(default=3, ge=1, le=10)
+    reranker: Literal["local", "cross_encoder"] = "local"
+    cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    # Below this many candidates the model cost outweighs any reordering gain.
+    cross_encoder_min_candidates: int = Field(default=10, ge=2, le=100)
     max_context_chars: int = Field(default=6000, ge=500, le=50000)
+    # Passages added on each side of a match as prompt context; 0 keeps matched passages only.
+    context_neighbor_passages: int = Field(default=0, ge=0, le=3)
+    # Runs hybrid document and SQL branches concurrently, each on its own DB session.
+    hybrid_parallel: bool = False
+    # One extra LLM call per document answer; a single revision, never blocks the answer.
+    critic_enabled: bool = False
+    # Fusion weights favour embeddings for paraphrases; raise BM25 for clause numbers and exact terms.
+    hybrid_vector_weight: float = Field(default=0.7, ge=0, le=1)
+    hybrid_bm25_weight: float = Field(default=0.3, ge=0, le=1)
+    rrf_k: int = Field(default=60, ge=1, le=200)
+    # Adds one LLM call per search; results from both phrasings are merged.
+    query_rewrite_enabled: bool = False
 
     # Rate limiting
     query_timeout_seconds: float = Field(default=180.0, gt=0, le=900)
@@ -104,6 +125,10 @@ class Settings(BaseSettings):
     qdrant_url: str = ""
     qdrant_api_key: str = ""
     qdrant_collection: str = "policymind_passages"
+    # HNSW m/ef_construct apply only when the collection is created; ef trades recall for latency.
+    qdrant_hnsw_m: int = Field(default=16, ge=4, le=64)
+    qdrant_hnsw_ef_construct: int = Field(default=128, ge=16, le=512)
+    qdrant_hnsw_ef: int = Field(default=64, ge=8, le=512)
 
     # CORS
     cors_origins: str = "*"  # Comma-separated list of origins, or * for all

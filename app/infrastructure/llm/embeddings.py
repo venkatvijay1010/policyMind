@@ -1,5 +1,6 @@
 """Embedding generation through the configured OpenAI-compatible provider."""
 
+from time import perf_counter
 from typing import List, Optional, cast
 
 import structlog
@@ -7,6 +8,7 @@ from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLim
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.config import settings
+from app.infrastructure import metrics
 
 logger = structlog.get_logger()
 
@@ -34,9 +36,11 @@ class EmbeddingService:
         """
         Generate embedding for a single text.
         """
+        started = perf_counter()
         response = await self.client.embeddings.create(
             model=self.model, input=text, encoding_format="float"
         )
+        metrics.EMBEDDING_SECONDS.labels(self.model).observe(perf_counter() - started)
 
         return cast(List[float], response.data[0].embedding)
 
@@ -60,6 +64,7 @@ class EmbeddingService:
 
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
+            started = perf_counter()
 
             logger.debug(
                 "Generating embeddings batch",
@@ -71,6 +76,7 @@ class EmbeddingService:
             response = await self.client.embeddings.create(
                 model=self.model, input=batch, encoding_format="float"
             )
+            metrics.EMBEDDING_SECONDS.labels(self.model).observe(perf_counter() - started)
 
             # Sort by index to maintain order
             batch_embeddings = [

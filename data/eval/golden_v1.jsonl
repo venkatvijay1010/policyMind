@@ -1,0 +1,6 @@
+{"query": "What is the maternity coverage limit?", "anchors": [{"contains": "50,000", "grade": 2}, {"contains": "maternity", "grade": 1}], "split": "dev", "reviewed": false}
+{"query": "What is the waiting period for pre-existing diseases?", "anchors": [{"contains": "48 months", "grade": 2}, {"contains": "pre-existing", "grade": 1}], "split": "test", "reviewed": false}
+{"query": "What is the room rent limit for the Standard Plan?", "anchors": [{"contains": "5,000", "grade": 2}, {"contains": "room rent", "grade": 1}], "split": "dev", "reviewed": false}
+{"query": "What are the permanent exclusions in the policy?", "anchors": [{"contains": "cosmetic", "grade": 2}, {"contains": "fertility", "grade": 1}], "split": "test", "reviewed": false}
+{"query": "What is the copay for the Enhanced Plan?", "anchors": [{"contains": "10%", "grade": 2}, {"contains": "Enhanced", "grade": 1}], "split": "dev", "reviewed": false}
+{"query": "What chronic conditions are covered after the waiting period?", "anchors": [{"contains": "diabetes", "grade": 2}, {"contains": "hypertension", "grade": 1}], "split": "test", "reviewed": false}

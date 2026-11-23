@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from prometheus_client import make_asgi_app
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -21,6 +22,7 @@ from app.config import settings
 from app.infrastructure.database.postgres import close_db, init_db
 from app.infrastructure.rate_limit import limiter
 from app.infrastructure.search.vector_store import close_vector_store
+from app.infrastructure.telemetry import add_trace_ids, setup_telemetry
 
 # Configure structured logging
 structlog.configure(
@@ -29,6 +31,7 @@ structlog.configure(
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
+        add_trace_ids,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.JSONRenderer(),
@@ -103,6 +106,11 @@ app.include_router(ingest.router, prefix="/api/v2", tags=["Knowledge"])
 app.include_router(sources.router, prefix="/api/v2", tags=["Knowledge"])
 app.include_router(ask.router, prefix="/api/v2", tags=["Insights"])
 app.include_router(eval_route.router, prefix="/api/v2", tags=["Evaluation"])
+
+if settings.metrics_enabled:
+    app.mount("/metrics", make_asgi_app())
+
+setup_telemetry(app)
 
 
 @app.get("/")

@@ -50,6 +50,9 @@ class QdrantVectorStore:
             await self._client.create_collection(
                 collection_name=self._collection,
                 vectors_config=models.VectorParams(size=size, distance=models.Distance.COSINE),
+                hnsw_config=models.HnswConfigDiff(
+                    m=settings.qdrant_hnsw_m, ef_construct=settings.qdrant_hnsw_ef_construct
+                ),
             )
             await self._client.create_payload_index(
                 collection_name=self._collection,
@@ -59,7 +62,13 @@ class QdrantVectorStore:
             self._ready = True
 
     async def search(
-        self, vector: Sequence[float], contract_id: Optional[int], limit: int
+        self,
+        vector: Sequence[float],
+        contract_id: Optional[int],
+        limit: int,
+        *,
+        hnsw_ef: Optional[int] = None,
+        exact: bool = False,
     ) -> list[VectorHit]:
         try:
             if not await self._collection_exists():
@@ -70,6 +79,9 @@ class QdrantVectorStore:
                 query_filter=_scope_filter(contract_id) if contract_id is not None else None,
                 limit=limit,
                 with_payload=["contract_id"],
+                search_params=models.SearchParams(
+                    hnsw_ef=hnsw_ef or settings.qdrant_hnsw_ef, exact=exact
+                ),
             )
         except Exception as exc:
             raise VectorStoreError("Vector search failed") from exc
@@ -127,6 +139,18 @@ class QdrantVectorStore:
             )
         except Exception as exc:
             raise VectorStoreError("Vector index cleanup failed") from exc
+
+    async def sample_vectors(self, count: int) -> list[list[float]]:
+        """Return up to `count` stored vectors, for recall measurement."""
+        try:
+            if not await self._collection_exists():
+                return []
+            points, _ = await self._client.scroll(
+                collection_name=self._collection, limit=count, with_vectors=True
+            )
+        except Exception as exc:
+            raise VectorStoreError("Vector sampling failed") from exc
+        return [list(point.vector) for point in points if isinstance(point.vector, list)]
 
     async def close(self) -> None:
         await self._client.close()

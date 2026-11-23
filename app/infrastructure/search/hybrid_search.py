@@ -3,7 +3,7 @@
 import json
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import structlog
 from rank_bm25 import BM25Okapi
@@ -37,6 +37,19 @@ class SearchResult:
     chunk: DocumentChunk
     score: float
     source: str  # 'vector', 'bm25', or 'hybrid'
+
+
+def rrf_merge(
+    rankings: Sequence[tuple[Sequence[SearchResult], float]], k: int = 60
+) -> List[SearchResult]:
+    """Weighted RRF over ranked lists; a chunk's score is the sum of weight / (k + rank)."""
+    scores: dict[int, tuple[DocumentChunk, float]] = {}
+    for results, weight in rankings:
+        for rank, result in enumerate(results, 1):
+            chunk, total = scores.get(result.chunk.id, (result.chunk, 0.0))
+            scores[result.chunk.id] = (chunk, total + weight / (k + rank))
+    ordered = sorted(scores.values(), key=lambda item: item[1], reverse=True)
+    return [SearchResult(chunk=chunk, score=score, source="hybrid") for chunk, score in ordered]
 
 
 class HybridSearch:
@@ -229,13 +242,15 @@ class HybridSearch:
         query: str,
         contract_id: Optional[int] = None,
         top_k: int = 5,
-        vector_weight: float = 0.7,
-        bm25_weight: float = 0.3,
+        vector_weight: Optional[float] = None,
+        bm25_weight: Optional[float] = None,
     ) -> List[SearchResult]:
         """
         Perform hybrid search combining vector and BM25.
-        Uses Reciprocal Rank Fusion (RRF) to merge results.
+        Uses weighted Reciprocal Rank Fusion (RRF) to merge results.
         """
+        vector_weight = settings.hybrid_vector_weight if vector_weight is None else vector_weight
+        bm25_weight = settings.hybrid_bm25_weight if bm25_weight is None else bm25_weight
         # Get results from both methods
         vector_results = await self.vector_search(query, contract_id, top_k=top_k * 2)
         vector_results = [
@@ -251,7 +266,7 @@ class HybridSearch:
         fused_results = self._rrf_fusion(
             vector_results,
             bm25_results,
-            k=60,  # RRF constant
+            k=settings.rrf_k,
             vector_weight=vector_weight,
             bm25_weight=bm25_weight,
         )
@@ -270,41 +285,9 @@ class HybridSearch:
         """
         Reciprocal Rank Fusion (RRF) to combine rankings.
 
-        RRF score = sum(1 / (k + rank))
+        RRF score = sum(weight / (k + rank))
         """
-        # Build rank dictionaries
-        chunk_scores: dict[int, tuple[DocumentChunk, float]] = {}
-
-        # Process vector results
-        for rank, result in enumerate(vector_results, 1):
-            chunk_id = result.chunk.id
-            rrf_score = vector_weight * (1 / (k + rank))
-
-            if chunk_id in chunk_scores:
-                existing_chunk, existing_score = chunk_scores[chunk_id]
-                chunk_scores[chunk_id] = (existing_chunk, existing_score + rrf_score)
-            else:
-                chunk_scores[chunk_id] = (result.chunk, rrf_score)
-
-        # Process BM25 results
-        for rank, result in enumerate(bm25_results, 1):
-            chunk_id = result.chunk.id
-            rrf_score = bm25_weight * (1 / (k + rank))
-
-            if chunk_id in chunk_scores:
-                existing_chunk, existing_score = chunk_scores[chunk_id]
-                chunk_scores[chunk_id] = (existing_chunk, existing_score + rrf_score)
-            else:
-                chunk_scores[chunk_id] = (result.chunk, rrf_score)
-
-        # Sort by combined score
-        sorted_results = sorted(chunk_scores.values(), key=lambda x: x[1], reverse=True)
-
-        # Build final results
-        return [
-            SearchResult(chunk=chunk, score=score, source="hybrid")
-            for chunk, score in sorted_results
-        ]
+        return rrf_merge([(vector_results, vector_weight), (bm25_results, bm25_weight)], k)
 
     async def search(
         self,

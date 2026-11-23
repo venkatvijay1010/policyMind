@@ -2,6 +2,7 @@
 Hybrid Agent - combines RAG and SQL for comprehensive answers.
 """
 
+import asyncio
 from typing import Any, List, Optional, cast
 
 import structlog
@@ -12,6 +13,7 @@ from app.application.agents.sql_agent import SQLAgent
 from app.config import settings
 from app.domain.entities.models import Citation, QueryResult, QueryType
 from app.domain.services.citation_builder import CitationBuilder
+from app.infrastructure.database.postgres import async_session_factory
 from app.infrastructure.llm.openai_client import get_openai_client
 
 logger = structlog.get_logger()
@@ -64,6 +66,18 @@ Return JSON:
             logger.error("Sub-query extraction failed", error=str(e))
             # Default: need both
             return {"doc_query": query, "sql_query": query, "needs_doc": True, "needs_sql": True}
+
+    async def _run_doc_branch(
+        self, query: str, contract_id: Optional[int], search_method: str
+    ) -> QueryResult:
+        async with async_session_factory() as session:
+            return await RAGAgent(session).answer(
+                query=query, contract_id=contract_id, search_method=search_method
+            )
+
+    async def _run_sql_branch(self, query: str) -> QueryResult:
+        async with async_session_factory() as session:
+            return await SQLAgent(session).answer(query)
 
     async def _synthesize_answer(
         self, original_query: str, doc_answer: Optional[str], sql_answer: Optional[str]
@@ -131,21 +145,40 @@ Please synthesize this into a single, coherent answer that:
         sql_query: Optional[str] = None
         sql_result: Optional[List[dict[str, Any]]] = None
 
-        # 2. Execute document search if needed
-        if bool(sub_queries.get("needs_doc", True)):
-            doc_query = str(sub_queries.get("doc_query") or query)
-            rag_result = await self.rag_agent.answer(
-                query=doc_query,
-                contract_id=contract_id,
-                search_method=search_method,
+        needs_doc = bool(sub_queries.get("needs_doc", True))
+        needs_sql = bool(sub_queries.get("needs_sql", True))
+        doc_query = str(sub_queries.get("doc_query") or query)
+        sql_query_text = str(sub_queries.get("sql_query") or query)
+
+        rag_result: Optional[QueryResult] = None
+        sql_result_obj: Optional[QueryResult] = None
+
+        if settings.hybrid_parallel and needs_doc and needs_sql:
+            outcomes = await asyncio.gather(
+                self._run_doc_branch(doc_query, contract_id, search_method),
+                self._run_sql_branch(sql_query_text),
+                return_exceptions=True,
             )
+            failures = [o for o in outcomes if isinstance(o, BaseException)]
+            if len(failures) == len(outcomes):
+                raise failures[0]
+            for branch, outcome in zip(("doc", "sql"), outcomes):
+                if isinstance(outcome, BaseException):
+                    logger.warning("Hybrid branch failed", branch=branch, error=str(outcome))
+            rag_result = outcomes[0] if isinstance(outcomes[0], QueryResult) else None
+            sql_result_obj = outcomes[1] if isinstance(outcomes[1], QueryResult) else None
+        else:
+            if needs_doc:
+                rag_result = await self.rag_agent.answer(
+                    query=doc_query, contract_id=contract_id, search_method=search_method
+                )
+            if needs_sql:
+                sql_result_obj = await self.sql_agent.answer(sql_query_text)
+
+        if rag_result:
             doc_answer = rag_result.answer
             all_citations.extend(rag_result.citations)
-
-        # 3. Execute SQL if needed
-        if bool(sub_queries.get("needs_sql", True)):
-            sql_query_text = str(sub_queries.get("sql_query") or query)
-            sql_result_obj = await self.sql_agent.answer(sql_query_text)
+        if sql_result_obj:
             sql_answer = sql_result_obj.answer
             sql_query = sql_result_obj.sql_query
             sql_result = sql_result_obj.sql_result

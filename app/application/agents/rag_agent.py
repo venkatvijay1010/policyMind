@@ -2,12 +2,16 @@
 RAG Agent - handles document Q&A with retrieval.
 """
 
+import asyncio
 from typing import List, Optional
 
 import structlog
 from openai import APIConnectionError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.agents.critic import find_unsupported_claims, revision_request
+from app.application.agents.query_rewriter import rewrite_query
 from app.config import settings
 from app.domain.entities.models import (
     DocumentChunk,
@@ -16,9 +20,11 @@ from app.domain.entities.models import (
     RetrievalResult,
 )
 from app.domain.services.citation_builder import CitationBuilder
+from app.domain.services.context_window import merge_passage_window
+from app.infrastructure.database.models import ContractPassage
 from app.infrastructure.llm.openai_client import get_openai_client
-from app.infrastructure.search.hybrid_search import HybridSearch
-from app.infrastructure.search.reranker import LocalReranker
+from app.infrastructure.search.hybrid_search import HybridSearch, SearchResult, rrf_merge
+from app.infrastructure.search.reranker import get_reranker
 
 logger = structlog.get_logger()
 
@@ -38,7 +44,7 @@ class RAGAgent:
         self.search = HybridSearch(session)
         self.llm = get_openai_client()
         self.citation_builder = CitationBuilder()
-        self.reranker = LocalReranker()
+        self.reranker = get_reranker()
 
     async def retrieve(
         self,
@@ -61,6 +67,10 @@ class RAGAgent:
             results = await self.search.search(
                 query=query, contract_id=contract_id, top_k=candidate_count, method=search_method
             )
+            if settings.query_rewrite_enabled and search_method == "hybrid":
+                results = await self._merge_rewritten_results(
+                    query, contract_id, candidate_count, results
+                )
         except (APIConnectionError, ConnectionError, TimeoutError):
             if search_method == "bm25":
                 raise
@@ -76,7 +86,8 @@ class RAGAgent:
             and result.score > 0
             and (search_method != "vector" or result.score >= settings.similarity_threshold)
         ]
-        chunks = self.reranker.rerank(query, chunks, effective_top_k)
+        chunks = await asyncio.to_thread(self.reranker.rerank, query, chunks, effective_top_k)
+        chunks = await self._expand_with_neighbors(chunks)
 
         logger.info(
             "Retrieved and reranked chunks",
@@ -87,6 +98,55 @@ class RAGAgent:
         )
 
         return RetrievalResult(chunks=chunks, search_method=search_method)
+
+    async def _merge_rewritten_results(
+        self,
+        query: str,
+        contract_id: Optional[int],
+        candidate_count: int,
+        results: List[SearchResult],
+    ) -> List[SearchResult]:
+        """Search the rewritten phrasing too; the original ranking keeps equal weight."""
+        rewritten = await rewrite_query(query)
+        if rewritten is None:
+            return results
+        extra = await self.search.search(
+            query=rewritten, contract_id=contract_id, top_k=candidate_count, method="hybrid"
+        )
+        logger.info("Query rewritten", original=query[:100], rewritten=rewritten[:100])
+        return rrf_merge([(results, 1.0), (extra, 1.0)], settings.rrf_k)[:candidate_count]
+
+    async def _expand_with_neighbors(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
+        """Give the model the passages around each match; citations keep the matched text."""
+        radius = settings.context_neighbor_passages
+        if radius <= 0:
+            return chunks
+        covered: set[tuple[int, int]] = set()
+        for chunk in chunks:
+            if chunk.passage_order is None or (chunk.contract_id, chunk.passage_order) in covered:
+                continue
+            rows = (
+                await self.session.execute(
+                    select(
+                        ContractPassage.passage_order,
+                        ContractPassage.content,
+                        ContractPassage.source_offset_start,
+                        ContractPassage.source_offset_end,
+                    )
+                    .where(
+                        ContractPassage.contract_id == chunk.contract_id,
+                        ContractPassage.passage_order.between(
+                            chunk.passage_order - radius, chunk.passage_order + radius
+                        ),
+                    )
+                    .order_by(ContractPassage.passage_order)
+                )
+            ).all()
+            if not rows:
+                continue
+            chunk.context_text = merge_passage_window([(r[1], r[2], r[3]) for r in rows])
+            covered.update((chunk.contract_id, r[0]) for r in rows)
+        return chunks
 
     def _build_context(self, chunks: List[DocumentChunk]) -> str:
         """
@@ -106,7 +166,7 @@ class RAGAgent:
         section_info = f" - Section: {chunk.topic_title}" if chunk.topic_title else ""
         if chunk.source_page:
             section_info += f" (Page {chunk.source_page})"
-        return f"[Source {index}{section_info}]\n{chunk.content}"
+        return f"[Source {index}{section_info}]\n{chunk.context_text or chunk.content}"
 
     def _select_context_chunks(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
         """Keep highest-ranked whole chunks within the prompt context budget."""
@@ -149,6 +209,20 @@ Format your answer clearly and professionally."""
 
         return answer
 
+    async def _revise_if_unsupported(
+        self, query: str, chunks: List[DocumentChunk], answer: str
+    ) -> str:
+        claims = await find_unsupported_claims(query, self._build_context(chunks), answer)
+        if not claims:
+            return answer
+        logger.warning("Critic flagged unsupported claims", count=len(claims))
+        try:
+            revised = await self.generate_answer(revision_request(query, claims), chunks)
+        except Exception as exc:
+            logger.warning("Revision failed; keeping draft", error_type=type(exc).__name__)
+            return answer
+        return revised if revised.strip() else answer
+
     async def answer(
         self,
         query: str,
@@ -181,6 +255,8 @@ Format your answer clearly and professionally."""
 
         # 2. Generate answer
         answer = await self.generate_answer(query, chunks)
+        if settings.critic_enabled:
+            answer = await self._revise_if_unsupported(query, chunks, answer)
 
         # 3. Build citations
         citations = self.citation_builder.build_citations(chunks)

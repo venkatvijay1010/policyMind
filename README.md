@@ -124,7 +124,7 @@ a provider/model that supports strict OpenAI-compatible JSON Schema responses. I
 does not silently downgrade unsupported schema requests. No model confidence is
 treated as a probability; the legacy preview `confidence` field is now null.
 `POST /api/v2/insights/route-preview` exposes the decision, capabilities, resolved
-query and clarification question. Routing logs include policy version `evidence-v2`,
+query and clarification question. Routing logs include policy version `evidence-v3`,
 duration and validation-attempt count.
 
 Contract tests mock model responses; they verify enforcement, not semantic accuracy.

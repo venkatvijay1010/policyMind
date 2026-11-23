@@ -84,6 +84,8 @@ class DocumentChunk:
     score: Optional[float] = None  # Similarity score when retrieved
     source_document_id: Optional[int] = None
     source_filename: Optional[str] = None
+    # Matched passage plus its neighbours; used in the prompt while `content` stays the citation.
+    context_text: Optional[str] = None
 
 
 @dataclass

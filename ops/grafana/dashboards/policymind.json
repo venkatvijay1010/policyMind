@@ -1,0 +1,60 @@
+{
+  "title": "PolicyMind",
+  "uid": "policymind",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Request latency P50/P95/P99 (s)",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "p50", "expr": "histogram_quantile(0.50, sum(rate(pm_request_seconds_bucket[5m])) by (le))" },
+        { "refId": "B", "legendFormat": "p95", "expr": "histogram_quantile(0.95, sum(rate(pm_request_seconds_bucket[5m])) by (le))" },
+        { "refId": "C", "legendFormat": "p99", "expr": "histogram_quantile(0.99, sum(rate(pm_request_seconds_bucket[5m])) by (le))" }
+      ]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Requests/s by route",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{route}}", "expr": "sum(rate(pm_request_seconds_count[5m])) by (route)" }
+      ]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Failures and retries /s",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{error_code}}", "expr": "sum(rate(pm_failures_total[5m])) by (error_code)" },
+        { "refId": "B", "legendFormat": "retries", "expr": "sum(rate(pm_retries_total[5m]))" }
+      ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "P95 node latency (s)",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{node}}", "expr": "histogram_quantile(0.95, sum(rate(pm_node_seconds_bucket[5m])) by (le, node))" }
+      ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Tokens per minute",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{kind}}", "expr": "sum(increase(pm_llm_tokens_total[1m])) by (kind)" }
+      ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Estimated cost, last 24h (USD)",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(increase(pm_llm_cost_usd_total[24h]))" }
+      ]
+    }
+  ]
+}
