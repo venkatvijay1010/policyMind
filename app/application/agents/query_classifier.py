@@ -3,7 +3,10 @@ Query classifier agent - routes queries to appropriate handler.
 """
 
 import asyncio
-from time import perf_counter
+import copy
+import json
+from collections import OrderedDict
+from time import monotonic, perf_counter
 from typing import Any, Literal
 
 import structlog
@@ -128,14 +131,32 @@ class QueryClassifier:
     def __init__(self):
         self.llm = get_openai_client()
 
+    # Shared because the orchestrator builds a classifier per request.
+    _cache: OrderedDict[str, tuple[float, ClassificationResult]] = OrderedDict()
+
     async def classify(
         self,
         query: str,
         conversation: list[dict[str, str]] | None = None,
     ) -> ClassificationResult:
         """Select evidence semantically and reject invalid or unavailable routing."""
-        started = perf_counter()
         history = conversation or []
+        size = settings.routing_cache_size
+        if not size:
+            return await self._classify(query, history)
+        key = json.dumps([id(self.llm), query, history], sort_keys=True)
+        hit = self._cache.get(key)
+        if hit and monotonic() - hit[0] < settings.routing_cache_ttl_seconds:
+            self._cache.move_to_end(key)
+            return copy.deepcopy(hit[1])
+        result = await self._classify(query, history)
+        self._cache[key] = (monotonic(), copy.deepcopy(result))
+        while len(self._cache) > size:
+            self._cache.popitem(last=False)
+        return result
+
+    async def _classify(self, query: str, history: list[dict[str, str]]) -> ClassificationResult:
+        started = perf_counter()
         try:
             async with asyncio.timeout(settings.routing_timeout_seconds):
                 for attempt in range(2):

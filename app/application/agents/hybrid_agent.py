@@ -57,6 +57,9 @@ Return JSON:
   "needs_sql": true/false
 }}"""
 
+        if not settings.hybrid_subquery_split:
+            return {"doc_query": query, "sql_query": query, "needs_doc": True, "needs_sql": True}
+
         try:
             result = await self.llm.generate_json(
                 prompt=prompt, system_prompt="You are an expert at analyzing insurance queries."

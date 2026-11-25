@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     context_neighbor_passages: int = Field(default=0, ge=0, le=3)
     # Runs hybrid document and SQL branches concurrently, each on its own DB session.
     hybrid_parallel: bool = False
+    # Splits a hybrid question into document and SQL parts; costs one extra LLM call per query.
+    hybrid_subquery_split: bool = True
+    # In-process caches that skip repeated embedding and routing calls for identical input.
+    embedding_cache_size: int = Field(default=512, ge=0, le=10000)
+    routing_cache_size: int = Field(default=256, ge=0, le=10000)
+    routing_cache_ttl_seconds: float = Field(default=300.0, gt=0, le=86400)
     # One extra LLM call per document answer; a single revision, never blocks the answer.
     critic_enabled: bool = False
     # Fusion weights favour embeddings for paraphrases; raise BM25 for clause numbers and exact terms.

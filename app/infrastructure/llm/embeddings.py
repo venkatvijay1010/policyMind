@@ -1,5 +1,6 @@
 """Embedding generation through the configured OpenAI-compatible provider."""
 
+from collections import OrderedDict
 from time import perf_counter
 from typing import List, Optional, cast
 
@@ -25,6 +26,7 @@ class EmbeddingService:
         )
         self.model = settings.embedding_model
         self.dimension = settings.embedding_dimension
+        self._query_cache: OrderedDict[str, List[float]] = OrderedDict()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -93,7 +95,16 @@ class EmbeddingService:
         Generate embedding for a search query.
         Same as embed_text but named for clarity.
         """
-        return cast(List[float], await self.embed_text(query))
+        size = settings.embedding_cache_size
+        if size and query in self._query_cache:
+            self._query_cache.move_to_end(query)
+            return list(self._query_cache[query])
+        embedding = cast(List[float], await self.embed_text(query))
+        if size:
+            self._query_cache[query] = embedding
+            while len(self._query_cache) > size:
+                self._query_cache.popitem(last=False)
+        return list(embedding)
 
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """
