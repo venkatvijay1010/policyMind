@@ -136,6 +136,13 @@ class Settings(BaseSettings):
     qdrant_hnsw_ef_construct: int = Field(default=128, ge=16, le=512)
     qdrant_hnsw_ef: int = Field(default=64, ge=8, le=512)
 
+    # Keyword index. "memory" runs rank_bm25 in-process per query; "elasticsearch" searches an
+    # Elasticsearch index (the database stays the source of truth for passages).
+    bm25_backend: Literal["memory", "elasticsearch"] = "memory"
+    elasticsearch_url: str = ""
+    elasticsearch_api_key: str = ""
+    elasticsearch_index: str = "policymind_passages"
+
     # CORS
     cors_origins: str = "*"  # Comma-separated list of origins, or * for all
 
@@ -145,6 +152,8 @@ class Settings(BaseSettings):
             raise ValueError("S3_BUCKET is required when STORAGE_BACKEND=s3")
         if self.vector_backend == "qdrant" and not self.qdrant_url.strip():
             raise ValueError("QDRANT_URL is required when VECTOR_BACKEND=qdrant")
+        if self.bm25_backend == "elasticsearch" and not self.elasticsearch_url.strip():
+            raise ValueError("ELASTICSEARCH_URL is required when BM25_BACKEND=elasticsearch")
         return self
 
     @property

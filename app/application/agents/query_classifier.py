@@ -131,8 +131,9 @@ class QueryClassifier:
     def __init__(self):
         self.llm = get_openai_client()
 
-    # Shared because the orchestrator builds a classifier per request.
-    _cache: OrderedDict[str, tuple[float, ClassificationResult]] = OrderedDict()
+    # Shared because the orchestrator builds a classifier per request; entries also hold the
+    # client that produced them so a different client never reuses another's decision.
+    _cache: OrderedDict[str, tuple[float, Any, ClassificationResult]] = OrderedDict()
 
     async def classify(
         self,
@@ -144,13 +145,13 @@ class QueryClassifier:
         size = settings.routing_cache_size
         if not size:
             return await self._classify(query, history)
-        key = json.dumps([id(self.llm), query, history], sort_keys=True)
+        key = json.dumps([query, history], sort_keys=True)
         hit = self._cache.get(key)
-        if hit and monotonic() - hit[0] < settings.routing_cache_ttl_seconds:
+        if hit and hit[1] is self.llm and monotonic() - hit[0] < settings.routing_cache_ttl_seconds:
             self._cache.move_to_end(key)
-            return copy.deepcopy(hit[1])
+            return copy.deepcopy(hit[2])
         result = await self._classify(query, history)
-        self._cache[key] = (monotonic(), copy.deepcopy(result))
+        self._cache[key] = (monotonic(), self.llm, copy.deepcopy(result))
         while len(self._cache) > size:
             self._cache.popitem(last=False)
         return result

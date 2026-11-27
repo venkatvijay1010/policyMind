@@ -15,6 +15,7 @@ from app.config import settings
 from app.domain.entities.models import DocumentChunk, SectionType
 from app.infrastructure.database.models import ContractPassage, PassageSource, SourceDocument
 from app.infrastructure.llm.embeddings import get_embedding_service
+from app.infrastructure.search.keyword_store import ElasticsearchKeywordStore, get_keyword_store
 from app.infrastructure.search.vector_store import QdrantVectorStore, get_vector_store
 
 logger = structlog.get_logger()
@@ -86,7 +87,11 @@ class HybridSearch:
         passages = result.scalars().all()
 
         ranked: list[SearchResult] = []
+        stale = 0
         for passage in passages:
+            if not self._embedding_is_current(passage):
+                stale += 1
+                continue
             embedding = self._embedding_values(passage.embedding)
             score = self._cosine_similarity(query_embedding, embedding)
             if score is None:
@@ -100,6 +105,7 @@ class HybridSearch:
             )
 
         ranked.sort(key=lambda item: item.score, reverse=True)
+        self._warn_stale(stale)
         return ranked[:top_k]
 
     async def _qdrant_search(
@@ -121,10 +127,14 @@ class HybridSearch:
         passages = {passage.id: passage for passage in rows.scalars().all()}
 
         results: list[SearchResult] = []
+        stale = 0
         for hit in hits:
             passage = passages.get(hit.passage_id)
             # Skip points left behind by a replaced scope whose row id was reused elsewhere.
             if passage is None or passage.contract_id != hit.contract_id:
+                continue
+            if not self._embedding_is_current(passage):
+                stale += 1
                 continue
             results.append(
                 SearchResult(
@@ -133,7 +143,22 @@ class HybridSearch:
                     source="vector",
                 )
             )
+        self._warn_stale(stale)
         return results
+
+    @staticmethod
+    def _embedding_is_current(passage: ContractPassage) -> bool:
+        """Vectors from another model are not comparable; unrecorded (legacy) rows are trusted."""
+        return passage.embedding_model in (None, settings.embedding_model)
+
+    @staticmethod
+    def _warn_stale(count: int) -> None:
+        if count:
+            logger.warning(
+                "Skipped passages embedded with another model; run scripts/reembed_passages.py",
+                skipped=count,
+                current_model=settings.embedding_model,
+            )
 
     @staticmethod
     def _embedding_values(value: object) -> Optional[list[float]]:
@@ -188,12 +213,51 @@ class HybridSearch:
             source_filename=source.filename if source else None,
         )
 
+    async def _elasticsearch_bm25(
+        self,
+        store: ElasticsearchKeywordStore,
+        query: str,
+        contract_id: Optional[int],
+        top_k: int,
+    ) -> List[SearchResult]:
+        """Rank in Elasticsearch, then load the passages from the database."""
+        hits = await store.search(query, contract_id, top_k)
+        if not hits:
+            return []
+        rows = await self.session.execute(
+            select(ContractPassage)
+            .options(*_passage_load_options())
+            .where(ContractPassage.id.in_([hit.passage_id for hit in hits]))
+        )
+        passages = {passage.id: passage for passage in rows.scalars().all()}
+
+        max_score = max(hit.score for hit in hits)
+        results: list[SearchResult] = []
+        for hit in hits:
+            passage = passages.get(hit.passage_id)
+            # Skip documents left behind by a replaced scope whose row id was reused elsewhere.
+            if passage is None or passage.contract_id != hit.contract_id or hit.score <= 0:
+                continue
+            normalized = hit.score / max_score if max_score > 0 else 0.0
+            results.append(
+                SearchResult(
+                    chunk=self._to_document_chunk(passage, normalized),
+                    score=normalized,
+                    source="bm25",
+                )
+            )
+        return results
+
     async def bm25_search(
         self, query: str, contract_id: Optional[int] = None, top_k: int = 10
     ) -> List[SearchResult]:
         """
         Perform BM25 keyword search.
         """
+        keyword_store = get_keyword_store()
+        if keyword_store is not None:
+            return await self._elasticsearch_bm25(keyword_store, query, contract_id, top_k)
+
         # Fetch all chunks for BM25 (or filtered by policy)
         if contract_id:
             stmt = (

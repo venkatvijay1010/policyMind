@@ -41,6 +41,7 @@ dependencies = [
     
     # Search
     "rank-bm25>=0.2.2",
+    "elasticsearch[async]>=8.13,<9",
     
     # Utilities
     "httpx>=0.26.0",

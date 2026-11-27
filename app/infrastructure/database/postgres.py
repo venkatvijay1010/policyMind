@@ -92,6 +92,7 @@ _ADDITIVE_COLUMNS: dict[str, tuple[str, ...]] = {
         "storage_uploaded_at",
     ),
     "document_elements": ("text_offset_start", "text_offset_end"),
+    "contract_passages": ("embedding_model",),
 }
 
 

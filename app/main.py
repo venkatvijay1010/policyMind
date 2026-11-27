@@ -21,6 +21,7 @@ from app.application.warm_up import warm_up_models
 from app.config import settings
 from app.infrastructure.database.postgres import close_db, init_db
 from app.infrastructure.rate_limit import limiter
+from app.infrastructure.search.keyword_store import close_keyword_store
 from app.infrastructure.search.vector_store import close_vector_store
 from app.infrastructure.telemetry import add_trace_ids, setup_telemetry
 
@@ -67,6 +68,7 @@ async def lifespan(app: FastAPI):
         warm_up_task.cancel()
         await asyncio.gather(warm_up_task, return_exceptions=True)
     await close_vector_store()
+    await close_keyword_store()
     await close_db()
 
 

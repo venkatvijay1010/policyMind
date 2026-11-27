@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS contract_passages (
     source_offset_end INTEGER,
     token_count INTEGER,
     embedding VECTOR(1536),
+    embedding_model VARCHAR(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

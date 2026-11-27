@@ -200,8 +200,8 @@ async def seed_database():
                     inserted = await session.execute(
                         text("""
                             INSERT INTO contract_passages
-                            (contract_id, content, passage_order, source_offset_start, source_offset_end, topic_title, embedding)
-                            VALUES (:contract_id, :content, :idx, :start, :end, :topic_title, :embedding)
+                            (contract_id, content, passage_order, source_offset_start, source_offset_end, topic_title, embedding, embedding_model)
+                            VALUES (:contract_id, :content, :idx, :start, :end, :topic_title, :embedding, :embedding_model)
                             RETURNING id
                         """),
                         {
@@ -212,6 +212,7 @@ async def seed_database():
                             "end": chunk["source_offset_end"],
                             "topic_title": chunk["topic_title"],
                             "embedding": json.dumps(embedding),
+                            "embedding_model": embedding_service.model,
                         },
                     )
                     passage_ids.append(inserted.scalar())

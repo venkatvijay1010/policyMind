@@ -86,6 +86,8 @@ class ContractPassage(Base):
     # SQLite stores vectors as JSON. HybridSearch performs cosine ranking in
     # Python, which is appropriate for the small local/demo knowledge base.
     embedding: Mapped[Optional[List[float]]] = mapped_column(JSON)
+    # Model that produced `embedding`; NULL for rows indexed before this was recorded.
+    embedding_model: Mapped[Optional[str]] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     # Relationships

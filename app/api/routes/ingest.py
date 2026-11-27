@@ -40,6 +40,7 @@ from app.infrastructure.documents.pdf_extractor import (
 )
 from app.infrastructure.llm.embeddings import get_embedding_service
 from app.infrastructure.rate_limit import limiter
+from app.infrastructure.search.keyword_store import KeywordStoreError, get_keyword_store
 from app.infrastructure.search.vector_store import VectorStoreError, get_vector_store
 from app.infrastructure.storage.object_storage import StorageError, get_object_storage
 
@@ -414,6 +415,7 @@ async def _index_contract_source(
         element_ids_by_page.setdefault(element.page_number, []).append(element.id)
 
     indexed_vectors: list[tuple[int, list[float]]] = []
+    indexed_texts: list[tuple[int, str]] = []
     for chunk, embedding in zip(chunks, embeddings):
         passage = ContractPassage(
             contract_id=scope_key,
@@ -424,10 +426,12 @@ async def _index_contract_source(
             topic_title=chunk["topic_title"],
             source_page=chunk["source_page"],
             embedding=embedding,
+            embedding_model=settings.embedding_model,
         )
         db.add(passage)
         await db.flush()
         indexed_vectors.append((passage.id, embedding))
+        indexed_texts.append((passage.id, chunk["content"]))
         source_pages = [chunk["source_page"]]
         if source_request.source_page_starts:
             first_page = max(
@@ -461,6 +465,16 @@ async def _index_contract_source(
             logger.exception("Vector index update failed", scope_key=scope_key)
             raise HTTPException(
                 status_code=502, detail="Unable to update the vector index"
+            ) from exc
+
+    keyword_store = get_keyword_store()
+    if keyword_store is not None:
+        try:
+            await keyword_store.replace_scope(scope_key, indexed_texts)
+        except KeywordStoreError as exc:
+            logger.exception("Keyword index update failed", scope_key=scope_key)
+            raise HTTPException(
+                status_code=502, detail="Unable to update the keyword index"
             ) from exc
 
     # Upload last so a failed index never leaves an object behind for an unsaved row.
@@ -584,12 +598,17 @@ async def ingest_file(
 async def _drop_vectors(scope_key: int) -> None:
     """Best effort: leftover points are ignored at query time because their rows are gone."""
     store = get_vector_store()
-    if store is None:
-        return
-    try:
-        await store.delete_scope(scope_key)
-    except VectorStoreError:
-        logger.warning("Vector cleanup failed", scope_key=scope_key)
+    if store is not None:
+        try:
+            await store.delete_scope(scope_key)
+        except VectorStoreError:
+            logger.warning("Vector cleanup failed", scope_key=scope_key)
+    keyword_store = get_keyword_store()
+    if keyword_store is not None:
+        try:
+            await keyword_store.delete_scope(scope_key)
+        except KeywordStoreError:
+            logger.warning("Keyword cleanup failed", scope_key=scope_key)
 
 
 @router.delete("/{scope_key}/source")
